@@ -1,0 +1,22 @@
+[package]
+name = "cloudmon-metrics"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+axum = { version="~0.5" }
+chrono = "~0.4"
+reqwest = { version = "~0.11", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "~1.0", features = ["derive"] }
+serde_json = "~1.0"
+serde_yaml = "~0.8"
+tokio = { version = "1", features = ["full"] }
+tower = { version = "~0.4" }
+tower-http = { version = "0.3.0", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(all(target_env = "musl", target_pointer_width = "64"))'.dependencies.jemallocator]
+version = "0.3"
