@@ -2,7 +2,9 @@
 //! for Grafana Json Datasource plugin
 //!
 use chrono::{DateTime, FixedOffset};
+use evalexpr::*;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     collections::{BTreeMap, HashMap},
     net::{IpAddr, SocketAddr},
@@ -31,7 +33,8 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 struct Config {
     datasource: Datasource,
     server: ConfigServer,
-    metrics: HashMap<String, MetricDef>,
+    bin_metrics: HashMap<String, BinaryMetricDef>,
+    expr_metrics: HashMap<String, ExpressionMetricDef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,10 +80,21 @@ struct Datasource {
 }
 
 #[derive(Debug, Deserialize)]
-struct MetricDef {
+struct BinaryMetricDef {
     query: String,
     op: CmpType,
     ref_value: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExpressionMetricDef {
+    metrics: Vec<String>,
+    expressions: Vec<MetricExpressionDef>,
+}
+#[derive(Debug, Deserialize)]
+struct MetricExpressionDef {
+    expression: String,
+    weight: i32,
 }
 
 type MetricPoints = BTreeMap<u32, bool>;
@@ -118,43 +132,68 @@ struct GrafanaJsonQueryRequest {
     // #[serde(rename(deserialize = "rangeRaw"))]
     // range_raw: GrafanaJsonQueryRequestRangeRaw,
     targets: Vec<GrafanaTarget>,
-    // #[serde(rename(deserialize = "maxDataPoints"))]
-    // max_data_points: u16,
+    #[serde(rename(deserialize = "maxDataPoints"))]
+    max_data_points: u16,
 }
 
 #[derive(Debug, Deserialize)]
 struct GrafanaJsonQueryRequestRange {
     from: String,
     to: String,
-    // raw: GrafanaJsonQueryRequestRangeRaw,
 }
-
-// #[derive(Debug, Deserialize)]
-// struct GrafanaJsonQueryRequestRangeRaw {
-//     from: String,
-//     to: String,
-// }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum GrafanaJsonTargetType {
     Timeserie,
+    Timeseries,
     Table,
+}
+
+impl GrafanaJsonTargetType {
+    fn timeseries() -> Self {
+        GrafanaJsonTargetType::Timeseries
+    }
 }
 
 #[derive(Deserialize, Debug)]
 struct GrafanaTarget {
     target: String,
-    // #[serde(rename(deserialize = "type"))]
-    // target_type: GrafanaJsonTargetType,
+    #[serde(rename(deserialize = "type"))]
+    #[serde(default = "GrafanaJsonTargetType::timeseries")]
+    target_type: GrafanaJsonTargetType,
     // #[serde(rename(deserialize = "refId"))]
     // ref_id: String,
 }
 
 #[derive(Serialize, Debug)]
-struct GrafanaDataTargetResponse {
-    target: String,
-    datapoints: Vec<(f32, u64)>,
+#[serde(untagged)]
+enum GrafanaDataFrameMessage {
+    Data {
+        target: String,
+        datapoints: Vec<(f32, u64)>,
+    },
+    Table {
+        columns: Vec<GrafanaDataTableColumnType>,
+        rows: Vec<Vec<serde_json::Value>>,
+        #[serde(rename(serialize = "type"))]
+        response_type: String,
+    },
+}
+
+#[derive(Serialize, Debug)]
+struct GrafanaDataTableColumnType {
+    text: String,
+    #[serde(rename(serialize = "type"))]
+    column_type: GrafanaTableColumnType,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum GrafanaTableColumnType {
+    Time,
+    // String,
+    Number,
 }
 
 fn alias_graphite_query(query: &str, alias: &str) -> String {
@@ -168,11 +207,13 @@ async fn get_graphite_data(
     targets: HashMap<&str, &str>,
     from: Option<DateTime<FixedOffset>>,
     to: Option<DateTime<FixedOffset>>,
+    max_data_points: u16,
 ) -> Result<Vec<GraphiteData>, Error> {
     // Prepare vector of query parameters
     let mut query_params: Vec<(_, String)> = [
         ("format", "json".to_string()),
-        ("noNullPoints", "true".to_string()),
+        // ("noNullPoints", "true".to_string()),
+        ("maxDataPoints", max_data_points.to_string()),
     ]
     .into();
     if let Some(xfrom) = from {
@@ -261,17 +302,18 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
+/// Get metrics from TSDB
 async fn get_metrics(
     state: &AppState,
     metric_names: Vec<String>,
     from: &str,
     to: &str,
+    max_data_points: u16,
 ) -> Vec<MetricData> {
-    let mut result: Vec<MetricData> = Vec::new();
     let mut graphite_targets: HashMap<&str, &str> = HashMap::new();
     // Construct target=>query map
     for metric in metric_names.iter() {
-        match state.config.metrics.get(metric) {
+        match state.config.bin_metrics.get(metric) {
             Some(m) => {
                 graphite_targets.insert(metric.as_str(), m.query.as_str());
             }
@@ -285,15 +327,17 @@ async fn get_metrics(
         graphite_targets,
         DateTime::parse_from_rfc3339(from).ok(),
         DateTime::parse_from_rfc3339(to).ok(),
+        max_data_points,
     )
     .await
     .unwrap();
+    let mut result: Vec<MetricData> = Vec::new();
     // tracing::debug!("Received following data: {:?}", raw_data);
     for data_element in raw_data.iter() {
-        match state.config.metrics.get(&data_element.target) {
+        match state.config.bin_metrics.get(&data_element.target) {
             Some(metric) => {
                 // log::debug!("Data element {:?}", data_element);
-                let points: BTreeMap<u32, bool> = BTreeMap::new();
+                let points: MetricPoints = BTreeMap::new();
                 let mut md = MetricData {
                     target: data_element.target.clone(),
                     points: points,
@@ -321,7 +365,23 @@ async fn get_metrics(
     }
     // tracing::debug!("Summary data: {:?}", result);
 
-    result
+    return result;
+}
+
+/// Return Tabular representation of the data requested
+fn get_tab_data(data: Vec<MetricData>) -> BTreeMap<u64, HashMap<String, bool>> {
+    let mut metrics_map: BTreeMap<u64, HashMap<String, bool>> = BTreeMap::new();
+    for data in data.iter() {
+        // Iterate over all fetched series
+        for datapoint in data.points.iter() {
+            // Iterate over datapoints of the series
+            metrics_map
+                .entry((*datapoint.0) as u64 * 1000)
+                .or_insert(HashMap::new())
+                .insert(data.target.clone(), *datapoint.1);
+        }
+    }
+    return metrics_map;
 }
 
 /// Handler for the /query endpoint
@@ -334,39 +394,137 @@ async fn handler_query(
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
     tracing::debug!("Query with {:?}", payload);
-    let mut response: Vec<GrafanaDataTargetResponse> = Vec::new();
+    let mut response: Vec<serde_json::Value> = Vec::new();
     let mut metrics: Vec<String> = Vec::new();
+    let mut expression_metrics: Vec<String> = Vec::new();
+    let mut expression_mode: bool = false;
+    let mut table_mode: bool = false;
     // Construct list of desired metrics
     for tgt in payload.targets.iter() {
         if "*".eq(&tgt.target) {
-            metrics.extend(state.config.metrics.keys().cloned());
-        } else {
+            metrics.extend(state.config.bin_metrics.keys().cloned());
+        } else if tgt.target.ends_with("*") {
+            tracing::debug!("* mode");
+            let target = &tgt.target[0..tgt.target.len() - 1];
+            tracing::debug!("Check with {}", target);
+            metrics.extend(
+                state
+                    .config
+                    .bin_metrics
+                    .keys()
+                    .filter(|x| x.starts_with(target))
+                    .cloned(),
+            );
+        } else if state.config.bin_metrics.contains_key(&tgt.target) {
             metrics.push(tgt.target.clone());
+        } else if state.config.expr_metrics.contains_key(&tgt.target) {
+            expression_mode = true;
+            if let Some(m) = state.config.expr_metrics.get(&tgt.target) {
+                expression_metrics.push(tgt.target.clone());
+                metrics.extend(m.metrics.iter().cloned())
+            }
+        }
+        match tgt.target_type {
+            GrafanaJsonTargetType::Table => table_mode = true,
+            _ => {}
         }
     }
-    // Iterate over result and convert it
-    for data in get_metrics(
+    tracing::debug!("requesting {:?}", metrics);
+    let raw_data = get_metrics(
         &state,
         metrics,
         payload.range.from.as_str(),
         payload.range.to.as_str(),
+        payload.max_data_points,
     )
-    .await
-    .iter()
-    {
-        let datapoints: Vec<(f32, u64)> = data
-            .points
-            .iter()
-            .map(|x| (if *x.1 { 1.0 } else { 0.0 }, (*x.0) as u64 * 1000))
-            .collect();
-        let data = GrafanaDataTargetResponse {
-            target: data.target.clone(),
-            datapoints: datapoints,
-        };
-        response.push(data);
+    .await;
+    if expression_mode {
+        // In the expression mode we pre-process metrics
+        let tab = get_tab_data(raw_data);
+        // tracing::debug!("Tab data = {:?}", tab);
+        let mut res: HashMap<String, Vec<(f32, u64)>> = HashMap::new();
+        for (ts, ts_val) in tab.iter() {
+            for target_hm in expression_metrics.iter() {
+                if let Some(hm_config) = state.config.expr_metrics.get(target_hm) {
+                    let result_metric_entry = res.entry(target_hm.into()).or_insert(Vec::new());
+                    let mut context = HashMapContext::new();
+                    for metric in hm_config.metrics.iter() {
+                        let xval = match ts_val.get(metric) {
+                            Some(&x) => x,
+                            _ => false,
+                        };
+                        context.set_value(metric.into(), Value::from(xval)).unwrap();
+                    }
+                    let mut expression_res: f32 = 0.0;
+                    for expr in hm_config.expressions.iter() {
+                        if expr.weight as f32 <= expression_res {
+                            continue;
+                        }
+                        match eval_boolean_with_context(expr.expression.as_str(), &context) {
+                            Ok(m) => {
+                                if m {
+                                    expression_res = expr.weight as f32;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!("Error {:?}", e);
+                            }
+                        }
+                    }
+                    result_metric_entry.push((expression_res, *ts));
+                }
+            }
+        }
+        for (metric, vals) in res.iter() {
+            let frame = GrafanaDataFrameMessage::Data {
+                target: metric.into(),
+                datapoints: vals.clone(),
+            };
+            response.push(json!(frame));
+        }
+    } else {
+        // Iterate over result and convert them
+        if !table_mode {
+            for data in raw_data.iter() {
+                let frame = GrafanaDataFrameMessage::Data {
+                    target: data.target.clone(),
+                    datapoints: data
+                        .points
+                        .iter()
+                        .map(|x| (if *x.1 { 1.0 } else { 0.0 }, (*x.0) as u64 * 1000))
+                        .collect(),
+                };
+                response.push(json!(frame));
+            }
+        } else {
+            // Return data in the tabular mode. Are we interested in that?
+            let mut cols: Vec<GrafanaDataTableColumnType> = vec![GrafanaDataTableColumnType {
+                text: "time".into(),
+                column_type: GrafanaTableColumnType::Time,
+            }];
+            let metrics: Vec<String> = raw_data.iter().map(|x| x.target.clone()).collect();
+            cols.extend(metrics.iter().map(|x| GrafanaDataTableColumnType {
+                text: x.clone(),
+                column_type: GrafanaTableColumnType::Number,
+            }));
+            let mut rows: Vec<Vec<serde_json::Value>> = Vec::new();
+            for (row_key, row_val) in get_tab_data(raw_data).iter() {
+                let mut row_data: Vec<serde_json::Value> = Vec::new();
+                row_data.push(json!(row_key));
+                for metric in metrics.iter() {
+                    row_data.push(json!(row_val.get(metric)));
+                }
+                rows.push(row_data);
+            }
+            let tab_response = GrafanaDataFrameMessage::Table {
+                columns: cols,
+                rows: rows,
+                response_type: "table".into(),
+            };
+            return Json(vec![json!(tab_response)]);
+        }
     }
-    // tracing::debug!("Sending {:?} back to requestor", response);
-    Json(response)
+    return Json(response);
 }
 
 /// Process /search request
@@ -376,7 +534,7 @@ async fn handler_search(
 ) -> impl IntoResponse {
     tracing::debug!("Searching with {:?}", payload);
     let mut metrics: Vec<String> = vec!["*".to_string()];
-    for (k, _) in state.config.metrics.iter() {
+    for (k, _) in state.config.bin_metrics.iter() {
         if k.starts_with(payload.target.as_str()) {
             tracing::debug!("Matching {}", k);
             metrics.push(k.clone());
