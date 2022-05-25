@@ -3,8 +3,12 @@
 //!
 use chrono::{DateTime, FixedOffset};
 use evalexpr::*;
+use new_string_template::template::Template;
+use regex::Regex;
+use reqwest::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::Duration;
 use std::{
     collections::{BTreeMap, HashMap},
     net::{IpAddr, SocketAddr},
@@ -16,8 +20,6 @@ use axum::{
     Json, Router,
 };
 use reqwest::ClientBuilder;
-use reqwest::Error;
-use std::time::Duration;
 use tokio::signal;
 // use tracing::Span;
 use tower::ServiceBuilder;
@@ -33,6 +35,7 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 struct Config {
     datasource: Datasource,
     server: ConfigServer,
+    metric_templates: HashMap<String, BinaryMetricRawDef>,
     bin_metrics: HashMap<String, BinaryMetricDef>,
     expr_metrics: HashMap<String, ExpressionMetricDef>,
 }
@@ -62,7 +65,7 @@ fn default_timeout() -> u16 {
 enum DatasourceType {
     Graphite,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum CmpType {
     Lt,
@@ -80,10 +83,36 @@ struct Datasource {
 }
 
 #[derive(Debug, Deserialize)]
-struct BinaryMetricDef {
+struct BinaryMetricRawDef {
     query: String,
     op: CmpType,
-    ref_value: f32,
+    threshold: f32,
+}
+
+impl Default for BinaryMetricRawDef {
+    fn default() -> Self {
+        BinaryMetricRawDef {
+            query: String::new(),
+            op: CmpType::Lt,
+            threshold: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct BinaryMetricDef {
+    query: Option<String>,
+    op: Option<CmpType>,
+    threshold: Option<f32>,
+    template: Option<MetricTemplateRef>,
+    #[serde(skip)]
+    raw: BinaryMetricRawDef,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct MetricTemplateRef {
+    name: String,
+    vars: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,7 +233,7 @@ fn alias_graphite_query(query: &str, alias: &str) -> String {
 async fn get_graphite_data(
     client: &reqwest::Client,
     url: &str,
-    targets: HashMap<&str, &str>,
+    targets: HashMap<&str, String>,
     from: Option<DateTime<FixedOffset>>,
     to: Option<DateTime<FixedOffset>>,
     max_data_points: u16,
@@ -251,7 +280,8 @@ async fn main() -> Result<(), Error> {
     tracing::info!("Starting cloudmon-metrics");
 
     let f = std::fs::File::open("config.yaml").expect("Could not open file.");
-    let config: Config = serde_yaml::from_reader(f).expect("Could not read values.");
+    let config: Config =
+        process_config(serde_yaml::from_reader(f).expect("Could not read values."));
 
     let timeout = Duration::from_secs(config.datasource.timeout as u64);
     let req_client: reqwest::Client = ClientBuilder::new().timeout(timeout).build()?;
@@ -302,6 +332,37 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
+/// Process config file to improve things we are going to search there
+fn process_config(mut config: Config) -> Config {
+    // We substitute $var syntax
+    let custom_regex = Regex::new(r"(?mi)\$([^\.]+)").unwrap();
+    for (_, metric_def) in config.bin_metrics.iter_mut() {
+        if let Some(tmpl_ref) = metric_def.template.clone() {
+            let tmpl = config.metric_templates.get(&tmpl_ref.name).unwrap();
+            metric_def.raw.op = tmpl.op.clone();
+            metric_def.raw.threshold = tmpl.threshold;
+            let tmpl_query = Template::new(tmpl.query.clone()).with_regex(&custom_regex);
+            let data = {
+                let mut map: HashMap<&str, &str> = HashMap::new();
+                for (k, v) in tmpl_ref.vars.iter() {
+                    map.insert(k.as_str(), v.as_str());
+                }
+                map
+            };
+            metric_def.raw.query = tmpl_query.render(&data).unwrap();
+        } else if let Some(val) = metric_def.query.clone() {
+            metric_def.raw.query = val;
+        }
+        if let Some(val) = metric_def.op.clone() {
+            metric_def.raw.op = val;
+        }
+        if let Some(val) = metric_def.threshold {
+            metric_def.raw.threshold = val;
+        }
+    }
+    config
+}
+
 /// Get metrics from TSDB
 async fn get_metrics(
     state: &AppState,
@@ -310,12 +371,12 @@ async fn get_metrics(
     to: &str,
     max_data_points: u16,
 ) -> Vec<MetricData> {
-    let mut graphite_targets: HashMap<&str, &str> = HashMap::new();
+    let mut graphite_targets: HashMap<&str, String> = HashMap::new();
     // Construct target=>query map
     for metric in metric_names.iter() {
         match state.config.bin_metrics.get(metric) {
             Some(m) => {
-                graphite_targets.insert(metric.as_str(), m.query.as_str());
+                graphite_targets.insert(metric.as_str(), m.raw.query.clone());
             }
             _ => {}
         };
@@ -344,10 +405,10 @@ async fn get_metrics(
                 };
                 for (val, ts) in data_element.datapoints.iter() {
                     let is_fulfilled = match *val {
-                        Some(x) => match metric.op {
-                            CmpType::Lt => (x < metric.ref_value),
-                            CmpType::Gt => (x > metric.ref_value),
-                            CmpType::Eq => (x == metric.ref_value),
+                        Some(x) => match metric.raw.op {
+                            CmpType::Lt => (x < metric.raw.threshold),
+                            CmpType::Gt => (x > metric.raw.threshold),
+                            CmpType::Eq => (x == metric.raw.threshold),
                         },
                         None => false,
                     };
@@ -458,7 +519,7 @@ async fn handler_query(
                     let mut expression_res: f32 = 0.0;
                     for expr in hm_config.expressions.iter() {
                         if expr.weight as f32 <= expression_res {
-                            continue;
+                            //    continue;
                         }
                         match eval_boolean_with_context(expr.expression.as_str(), &context) {
                             Ok(m) => {
