@@ -14,6 +14,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
+use tower_http::request_id::{MakeRequestId, RequestId};
 
 use axum::{
     extract::Extension, handler::Handler, http::StatusCode, response::IntoResponse, routing::get,
@@ -21,15 +22,33 @@ use axum::{
 };
 use reqwest::ClientBuilder;
 use tokio::signal;
-// use tracing::Span;
 use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
+use tower_http::{
+    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+    ServiceBuilderExt,
+};
+// use tracing::Span;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
 // Use Jemalloc only for musl-64 bits platforms
 #[cfg(all(target_env = "musl", target_pointer_width = "64"))]
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
+// A `MakeRequestId` that increments an atomic counter
+#[derive(Clone, Default)]
+struct MyMakeRequestId {}
+
+impl MakeRequestId for MyMakeRequestId {
+    fn make_request_id<B>(&mut self, _request: &http::Request<B>) -> Option<RequestId> {
+        let req_id = Uuid::new_v4().simple().to_string();
+
+        Some(RequestId::new(
+            http::HeaderValue::from_str(req_id.as_str()).unwrap(),
+        ))
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -57,7 +76,7 @@ fn default_port() -> u16 {
 }
 
 fn default_timeout() -> u16 {
-    5
+    10
 }
 
 #[derive(Debug, Deserialize)]
@@ -261,8 +280,8 @@ async fn get_graphite_data(
         .query(&query_params)
         .send()
         .await?;
-    tracing::debug!("Status: {}", res.status());
-    tracing::debug!("Headers:\n{:#?}", res.headers());
+    // tracing::debug!("Status: {}", res.status());
+    // tracing::debug!("Headers:\n{:#?}", res.headers());
 
     let data: Vec<GraphiteData> = res.json().await?;
     Ok(data)
@@ -301,21 +320,17 @@ async fn main() -> Result<(), Error> {
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(app_state))
+                .set_x_request_id(MyMakeRequestId::default())
                 // `TraceLayer` is provided by tower-http so you have to add that as a dependency.
                 // It provides good defaults but is also very customizable.
                 //
                 // See https://docs.rs/tower-http/0.1.1/tower_http/trace/index.html for more details.
-                //        .layer(TraceLayer::new_for_http().on_request(
-                //            |request: &axum::http::Request<_>, _span: &Span| {
-                //                tracing::debug!(
-                //                    "started {} {} {:?}",
-                //                    request.method(),
-                //                    request.uri().path(),
-                //                    request
-                //                )
-                //            },
-                //        ));
-                .layer(TraceLayer::new_for_http()),
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(DefaultMakeSpan::new().include_headers(true))
+                        .on_response(DefaultOnResponse::new().include_headers(true)),
+                ),
+            // .layer(TraceLayer::new_for_http()),
         );
 
     // add a fallback service for handling routes to unknown paths
@@ -381,7 +396,7 @@ async fn get_metrics(
             _ => {}
         };
     }
-    tracing::debug!("Requesting {:?}", graphite_targets);
+    tracing::debug!("Requesting Graphite {:?}", graphite_targets);
     let raw_data: Vec<GraphiteData> = get_graphite_data(
         &state.req_client,
         &state.config.datasource.url.as_str(),
@@ -454,7 +469,7 @@ async fn handler_query(
     Json(payload): Json<GrafanaJsonQueryRequest>,
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
-    tracing::debug!("Query with {:?}", payload);
+    // tracing::debug!("Query with {:?}", payload);
     let mut response: Vec<serde_json::Value> = Vec::new();
     let mut metrics: Vec<String> = Vec::new();
     let mut expression_metrics: Vec<String> = Vec::new();
@@ -465,9 +480,7 @@ async fn handler_query(
         if "*".eq(&tgt.target) {
             metrics.extend(state.config.bin_metrics.keys().cloned());
         } else if tgt.target.ends_with("*") {
-            tracing::debug!("* mode");
             let target = &tgt.target[0..tgt.target.len() - 1];
-            tracing::debug!("Check with {}", target);
             metrics.extend(
                 state
                     .config
@@ -490,7 +503,7 @@ async fn handler_query(
             _ => {}
         }
     }
-    tracing::debug!("requesting {:?}", metrics);
+    tracing::debug!("Need following metrics: {:?}", metrics);
     let raw_data = get_metrics(
         &state,
         metrics,
@@ -639,7 +652,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod test {
     use super::*;
-    use mockito::{mock, Matcher};
+    use mockito::Matcher;
 
     #[test]
     fn test_alias_graphite_query() {
