@@ -27,9 +27,5 @@ uuid = { version = "~1.1", features = ["v4", "fast-rng"] }
 mockito = "~0.31"
 tokio-test = "*"
 
-[dev-dependencies]
-mockito = "~0.31"
-tokio-test = "*"
-
 [target.'cfg(all(target_env = "musl", target_pointer_width = "64"))'.dependencies.jemallocator]
 version = "0.3"
