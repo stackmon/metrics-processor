@@ -3,36 +3,58 @@
 //!
 use chrono::{DateTime, FixedOffset};
 use evalexpr::*;
+use new_string_template::template::Template;
+use regex::Regex;
+use reqwest::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::Duration;
 use std::{
     collections::{BTreeMap, HashMap},
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
+use tower_http::request_id::{MakeRequestId, RequestId};
 
 use axum::{
     extract::Extension, handler::Handler, http::StatusCode, response::IntoResponse, routing::get,
     Json, Router,
 };
 use reqwest::ClientBuilder;
-use reqwest::Error;
-use std::time::Duration;
 use tokio::signal;
-// use tracing::Span;
 use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
+use tower_http::{
+    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+    ServiceBuilderExt,
+};
+// use tracing::Span;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
 // Use Jemalloc only for musl-64 bits platforms
 #[cfg(all(target_env = "musl", target_pointer_width = "64"))]
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
+// A `MakeRequestId` that increments an atomic counter
+#[derive(Clone, Default)]
+struct MyMakeRequestId {}
+
+impl MakeRequestId for MyMakeRequestId {
+    fn make_request_id<B>(&mut self, _request: &http::Request<B>) -> Option<RequestId> {
+        let req_id = Uuid::new_v4().simple().to_string();
+
+        Some(RequestId::new(
+            http::HeaderValue::from_str(req_id.as_str()).unwrap(),
+        ))
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct Config {
     datasource: Datasource,
     server: ConfigServer,
+    metric_templates: HashMap<String, BinaryMetricRawDef>,
     bin_metrics: HashMap<String, BinaryMetricDef>,
     expr_metrics: HashMap<String, ExpressionMetricDef>,
 }
@@ -54,7 +76,7 @@ fn default_port() -> u16 {
 }
 
 fn default_timeout() -> u16 {
-    5
+    10
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,7 +84,7 @@ fn default_timeout() -> u16 {
 enum DatasourceType {
     Graphite,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum CmpType {
     Lt,
@@ -80,10 +102,36 @@ struct Datasource {
 }
 
 #[derive(Debug, Deserialize)]
-struct BinaryMetricDef {
+struct BinaryMetricRawDef {
     query: String,
     op: CmpType,
-    ref_value: f32,
+    threshold: f32,
+}
+
+impl Default for BinaryMetricRawDef {
+    fn default() -> Self {
+        BinaryMetricRawDef {
+            query: String::new(),
+            op: CmpType::Lt,
+            threshold: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct BinaryMetricDef {
+    query: Option<String>,
+    op: Option<CmpType>,
+    threshold: Option<f32>,
+    template: Option<MetricTemplateRef>,
+    #[serde(skip)]
+    raw: BinaryMetricRawDef,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct MetricTemplateRef {
+    name: String,
+    vars: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,7 +252,7 @@ fn alias_graphite_query(query: &str, alias: &str) -> String {
 async fn get_graphite_data(
     client: &reqwest::Client,
     url: &str,
-    targets: HashMap<&str, &str>,
+    targets: HashMap<&str, String>,
     from: Option<DateTime<FixedOffset>>,
     to: Option<DateTime<FixedOffset>>,
     max_data_points: u16,
@@ -232,8 +280,8 @@ async fn get_graphite_data(
         .query(&query_params)
         .send()
         .await?;
-    // log::debug!("Status: {}", res.status());
-    // log::debug!("Headers:\n{:#?}", res.headers());
+    // tracing::debug!("Status: {}", res.status());
+    // tracing::debug!("Headers:\n{:#?}", res.headers());
 
     let data: Vec<GraphiteData> = res.json().await?;
     Ok(data)
@@ -251,7 +299,8 @@ async fn main() -> Result<(), Error> {
     tracing::info!("Starting cloudmon-metrics");
 
     let f = std::fs::File::open("config.yaml").expect("Could not open file.");
-    let config: Config = serde_yaml::from_reader(f).expect("Could not read values.");
+    let config: Config =
+        process_config(serde_yaml::from_reader(f).expect("Could not read values."));
 
     let timeout = Duration::from_secs(config.datasource.timeout as u64);
     let req_client: reqwest::Client = ClientBuilder::new().timeout(timeout).build()?;
@@ -271,21 +320,17 @@ async fn main() -> Result<(), Error> {
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(app_state))
+                .set_x_request_id(MyMakeRequestId::default())
                 // `TraceLayer` is provided by tower-http so you have to add that as a dependency.
                 // It provides good defaults but is also very customizable.
                 //
                 // See https://docs.rs/tower-http/0.1.1/tower_http/trace/index.html for more details.
-                //        .layer(TraceLayer::new_for_http().on_request(
-                //            |request: &axum::http::Request<_>, _span: &Span| {
-                //                tracing::debug!(
-                //                    "started {} {} {:?}",
-                //                    request.method(),
-                //                    request.uri().path(),
-                //                    request
-                //                )
-                //            },
-                //        ));
-                .layer(TraceLayer::new_for_http()),
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(DefaultMakeSpan::new().include_headers(true))
+                        .on_response(DefaultOnResponse::new().include_headers(true)),
+                ),
+            // .layer(TraceLayer::new_for_http()),
         );
 
     // add a fallback service for handling routes to unknown paths
@@ -302,6 +347,37 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
+/// Process config file to improve things we are going to search there
+fn process_config(mut config: Config) -> Config {
+    // We substitute $var syntax
+    let custom_regex = Regex::new(r"(?mi)\$([^\.]+)").unwrap();
+    for (_, metric_def) in config.bin_metrics.iter_mut() {
+        if let Some(tmpl_ref) = metric_def.template.clone() {
+            let tmpl = config.metric_templates.get(&tmpl_ref.name).unwrap();
+            metric_def.raw.op = tmpl.op.clone();
+            metric_def.raw.threshold = tmpl.threshold;
+            let tmpl_query = Template::new(tmpl.query.clone()).with_regex(&custom_regex);
+            let data = {
+                let mut map: HashMap<&str, &str> = HashMap::new();
+                for (k, v) in tmpl_ref.vars.iter() {
+                    map.insert(k.as_str(), v.as_str());
+                }
+                map
+            };
+            metric_def.raw.query = tmpl_query.render(&data).unwrap();
+        } else if let Some(val) = metric_def.query.clone() {
+            metric_def.raw.query = val;
+        }
+        if let Some(val) = metric_def.op.clone() {
+            metric_def.raw.op = val;
+        }
+        if let Some(val) = metric_def.threshold {
+            metric_def.raw.threshold = val;
+        }
+    }
+    config
+}
+
 /// Get metrics from TSDB
 async fn get_metrics(
     state: &AppState,
@@ -310,17 +386,17 @@ async fn get_metrics(
     to: &str,
     max_data_points: u16,
 ) -> Vec<MetricData> {
-    let mut graphite_targets: HashMap<&str, &str> = HashMap::new();
+    let mut graphite_targets: HashMap<&str, String> = HashMap::new();
     // Construct target=>query map
     for metric in metric_names.iter() {
         match state.config.bin_metrics.get(metric) {
             Some(m) => {
-                graphite_targets.insert(metric.as_str(), m.query.as_str());
+                graphite_targets.insert(metric.as_str(), m.raw.query.clone());
             }
             _ => {}
         };
     }
-    tracing::debug!("Requesting {:?}", graphite_targets);
+    tracing::debug!("Requesting Graphite {:?}", graphite_targets);
     let raw_data: Vec<GraphiteData> = get_graphite_data(
         &state.req_client,
         &state.config.datasource.url.as_str(),
@@ -344,10 +420,10 @@ async fn get_metrics(
                 };
                 for (val, ts) in data_element.datapoints.iter() {
                     let is_fulfilled = match *val {
-                        Some(x) => match metric.op {
-                            CmpType::Lt => (x < metric.ref_value),
-                            CmpType::Gt => (x > metric.ref_value),
-                            CmpType::Eq => (x == metric.ref_value),
+                        Some(x) => match metric.raw.op {
+                            CmpType::Lt => (x < metric.raw.threshold),
+                            CmpType::Gt => (x > metric.raw.threshold),
+                            CmpType::Eq => (x == metric.raw.threshold),
                         },
                         None => false,
                     };
@@ -393,7 +469,7 @@ async fn handler_query(
     Json(payload): Json<GrafanaJsonQueryRequest>,
     Extension(state): Extension<Arc<AppState>>,
 ) -> impl IntoResponse {
-    tracing::debug!("Query with {:?}", payload);
+    // tracing::debug!("Query with {:?}", payload);
     let mut response: Vec<serde_json::Value> = Vec::new();
     let mut metrics: Vec<String> = Vec::new();
     let mut expression_metrics: Vec<String> = Vec::new();
@@ -404,9 +480,7 @@ async fn handler_query(
         if "*".eq(&tgt.target) {
             metrics.extend(state.config.bin_metrics.keys().cloned());
         } else if tgt.target.ends_with("*") {
-            tracing::debug!("* mode");
             let target = &tgt.target[0..tgt.target.len() - 1];
-            tracing::debug!("Check with {}", target);
             metrics.extend(
                 state
                     .config
@@ -429,7 +503,7 @@ async fn handler_query(
             _ => {}
         }
     }
-    tracing::debug!("requesting {:?}", metrics);
+    tracing::debug!("Need following metrics: {:?}", metrics);
     let raw_data = get_metrics(
         &state,
         metrics,
@@ -458,7 +532,7 @@ async fn handler_query(
                     let mut expression_res: f32 = 0.0;
                     for expr in hm_config.expressions.iter() {
                         if expr.weight as f32 <= expression_res {
-                            continue;
+                            //    continue;
                         }
                         match eval_boolean_with_context(expr.expression.as_str(), &context) {
                             Ok(m) => {
@@ -573,4 +647,57 @@ async fn shutdown_signal() {
     }
 
     println!("signal received, starting graceful shutdown");
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use mockito::Matcher;
+
+    #[test]
+    fn test_alias_graphite_query() {
+        assert_eq!(alias_graphite_query("q", "n"), "alias(q,'n')");
+    }
+
+    macro_rules! aw {
+        ($e:expr) => {
+            tokio_test::block_on($e)
+        };
+    }
+
+    #[test]
+    fn test_get_graphite_data() {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+
+        let mock = mockito::mock("GET", "/render")
+            .expect(1)
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("target".into(), "alias(query,'alias')".into()),
+                Matcher::UrlEncoded("from".into(), "00:00_20220101".into()),
+                Matcher::UrlEncoded("until".into(), "00:00_20220201".into()),
+                Matcher::UrlEncoded("maxDataPoints".into(), "15".into()),
+            ]))
+            .create();
+        let timeout = Duration::from_secs(1 as u64);
+        let _req_client: reqwest::Client = ClientBuilder::new().timeout(timeout).build().unwrap();
+
+        let mut targets: HashMap<&str, String> = HashMap::new();
+        targets.insert("alias", "query".to_string());
+        let from: Option<DateTime<FixedOffset>> =
+            DateTime::parse_from_rfc3339("2022-01-01T00:00:00+00:00").ok();
+        let to: Option<DateTime<FixedOffset>> =
+            DateTime::parse_from_rfc3339("2022-02-01T00:00:00+00:00").ok();
+        let max_data_points: u16 = 15;
+        let _res = aw!(get_graphite_data(
+            &_req_client,
+            format!("{}", mockito::server_url()).as_str(),
+            targets,
+            from,
+            to,
+            max_data_points,
+        ));
+        mock.assert();
+    }
 }
