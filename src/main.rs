@@ -261,8 +261,8 @@ async fn get_graphite_data(
         .query(&query_params)
         .send()
         .await?;
-    // log::debug!("Status: {}", res.status());
-    // log::debug!("Headers:\n{:#?}", res.headers());
+    tracing::debug!("Status: {}", res.status());
+    tracing::debug!("Headers:\n{:#?}", res.headers());
 
     let data: Vec<GraphiteData> = res.json().await?;
     Ok(data)
@@ -634,4 +634,57 @@ async fn shutdown_signal() {
     }
 
     println!("signal received, starting graceful shutdown");
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use mockito::{mock, Matcher};
+
+    #[test]
+    fn test_alias_graphite_query() {
+        assert_eq!(alias_graphite_query("q", "n"), "alias(q,'n')");
+    }
+
+    macro_rules! aw {
+        ($e:expr) => {
+            tokio_test::block_on($e)
+        };
+    }
+
+    #[test]
+    fn test_get_graphite_data() {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+
+        let mock = mockito::mock("GET", "/render")
+            .expect(1)
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("target".into(), "alias(query,'alias')".into()),
+                Matcher::UrlEncoded("from".into(), "00:00_20220101".into()),
+                Matcher::UrlEncoded("until".into(), "00:00_20220201".into()),
+                Matcher::UrlEncoded("maxDataPoints".into(), "15".into()),
+            ]))
+            .create();
+        let timeout = Duration::from_secs(1 as u64);
+        let _req_client: reqwest::Client = ClientBuilder::new().timeout(timeout).build().unwrap();
+
+        let mut targets: HashMap<&str, String> = HashMap::new();
+        targets.insert("alias", "query".to_string());
+        let from: Option<DateTime<FixedOffset>> =
+            DateTime::parse_from_rfc3339("2022-01-01T00:00:00+00:00").ok();
+        let to: Option<DateTime<FixedOffset>> =
+            DateTime::parse_from_rfc3339("2022-02-01T00:00:00+00:00").ok();
+        let max_data_points: u16 = 15;
+        let _res = aw!(get_graphite_data(
+            &_req_client,
+            format!("{}", mockito::server_url()).as_str(),
+            targets,
+            from,
+            to,
+            max_data_points,
+        ));
+        mock.assert();
+    }
 }
