@@ -54,9 +54,30 @@ impl MakeRequestId for MyMakeRequestId {
 struct Config {
     datasource: Datasource,
     server: ConfigServer,
-    metric_templates: HashMap<String, BinaryMetricRawDef>,
+    metric_templates: Option<HashMap<String, BinaryMetricRawDef>>,
     bin_metrics: HashMap<String, BinaryMetricDef>,
-    expr_metrics: HashMap<String, ExpressionMetricDef>,
+    expr_metrics: Option<HashMap<String, ExpressionMetricDef>>,
+}
+
+impl Config {
+    pub fn from_config_file(config_file: &str) -> Self {
+        let f = std::fs::File::open(config_file).expect("Could not open file.");
+        let config: Config = serde_yaml::from_reader(f).expect("Could not read values.");
+        return config;
+    }
+
+    #[allow(dead_code)]
+    pub fn from_config_str(config: &str) -> Self {
+        let config: Config = serde_yaml::from_str(config).expect("Could not read values.");
+        return config;
+    }
+
+    fn get_socket_addr(&self) -> SocketAddr {
+        SocketAddr::from((
+            self.server.address.as_str().parse::<IpAddr>().unwrap(),
+            self.server.port,
+        ))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,7 +122,7 @@ struct Datasource {
     timeout: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct BinaryMetricRawDef {
     query: String,
     op: CmpType,
@@ -124,8 +145,8 @@ struct BinaryMetricDef {
     op: Option<CmpType>,
     threshold: Option<f32>,
     template: Option<MetricTemplateRef>,
-    #[serde(skip)]
-    raw: BinaryMetricRawDef,
+    // #[serde(skip)]
+    // raw: BinaryMetricRawDef,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -160,8 +181,87 @@ struct GraphiteData {
 }
 
 struct AppState {
+    // config_path: String,
     config: Config,
+    metric_templates: HashMap<String, BinaryMetricRawDef>,
+    bin_metrics: HashMap<String, BinaryMetricRawDef>,
+    expr_metrics: HashMap<String, ExpressionMetricDef>,
     req_client: reqwest::Client,
+}
+
+impl AppState {
+    fn new(config: Config) -> Self {
+        let timeout = Duration::from_secs(config.datasource.timeout as u64);
+
+        Self {
+            config: config,
+            metric_templates: HashMap::new(),
+            bin_metrics: HashMap::new(),
+            expr_metrics: HashMap::new(),
+            req_client: ClientBuilder::new().timeout(timeout).build().unwrap(),
+        }
+    }
+
+    fn process_config(&mut self) {
+        // We substitute $var syntax
+        let custom_regex = Regex::new(r"(?mi)\$([^\.]+)").unwrap();
+        if let Some(templates) = &self.config.metric_templates {
+            self.metric_templates.clone_from(templates);
+            //.clone();
+        }
+        for (metric_name, metric_def) in self.config.bin_metrics.iter() {
+            let mut raw = BinaryMetricRawDef::default();
+
+            if let Some(tmpl_ref) = &metric_def.template {
+                let tmpl = self.metric_templates.get(&tmpl_ref.name).unwrap();
+                raw.op = tmpl.op.clone();
+                raw.threshold = tmpl.threshold;
+                let tmpl_query = Template::new(tmpl.query.clone()).with_regex(&custom_regex);
+                let data = {
+                    let mut map: HashMap<&str, &str> = HashMap::new();
+                    for (k, v) in tmpl_ref.vars.iter() {
+                        map.insert(k.as_str(), v.as_str());
+                    }
+                    map
+                };
+                raw.query = tmpl_query.render(&data).unwrap();
+            } else if let Some(val) = metric_def.query.clone() {
+                raw.query = val;
+            }
+            if let Some(val) = metric_def.op.clone() {
+                raw.op = val;
+            }
+            if let Some(val) = metric_def.threshold {
+                raw.threshold = val;
+            }
+            self.bin_metrics.insert(metric_name.into(), raw);
+        }
+        if let Some(expr_metrics) = &self.config.expr_metrics {
+            for (metric_name, expression_def) in expr_metrics.iter() {
+                let mut int_metric = ExpressionMetricDef {
+                    metrics: expression_def.metrics.clone(),
+                    expressions: Vec::new(),
+                };
+                // If we have "-" in the metric name evalexpr will treat it as minus operation. In order to
+                // avoid that replace "-" with "_" in the expression. Values will be renamed during
+                // evaluation.
+                for metric in expression_def.metrics.iter() {
+                    if metric.contains("-") {
+                        let rename = metric.replace("-", "_");
+                        for expr in expression_def.expressions.iter() {
+                            int_metric.expressions.push(MetricExpressionDef {
+                                expression: expr
+                                    .expression
+                                    .replace(metric, rename.clone().as_str()),
+                                weight: expr.weight,
+                            });
+                        }
+                    }
+                }
+                self.expr_metrics.insert(metric_name.into(), int_metric);
+            }
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -298,19 +398,12 @@ async fn main() -> Result<(), Error> {
 
     tracing::info!("Starting cloudmon-metrics");
 
-    let f = std::fs::File::open("config.yaml").expect("Could not open file.");
-    let config: Config =
-        process_config(serde_yaml::from_reader(f).expect("Could not read values."));
+    let config = Config::from_config_file("config.yaml");
+    let mut state = AppState::new(config);
+    state.process_config();
+    let server_addr = state.config.get_socket_addr().clone();
 
-    let timeout = Duration::from_secs(config.datasource.timeout as u64);
-    let req_client: reqwest::Client = ClientBuilder::new().timeout(timeout).build()?;
-
-    let addr = SocketAddr::from((
-        config.server.address.as_str().parse::<IpAddr>().unwrap(),
-        config.server.port,
-    ));
-    let app_state = Arc::new(AppState { config, req_client });
-
+    let app_state = Arc::new(state);
     // build our application with a single route
     let app = Router::new()
         .route("/", get(|| async { "" }))
@@ -336,8 +429,8 @@ async fn main() -> Result<(), Error> {
     // add a fallback service for handling routes to unknown paths
     let app = app.fallback(handler_404.into_service());
 
-    tracing::debug!("listening on {}", addr);
-    axum::Server::bind(&addr)
+    tracing::debug!("listening on {}", server_addr);
+    axum::Server::bind(&server_addr)
         .serve(app.into_make_service())
         .with_graceful_shutdown(shutdown_signal())
         .await
@@ -345,37 +438,6 @@ async fn main() -> Result<(), Error> {
 
     tracing::info!("Stopped cloudmon-metrics");
     Ok(())
-}
-
-/// Process config file to improve things we are going to search there
-fn process_config(mut config: Config) -> Config {
-    // We substitute $var syntax
-    let custom_regex = Regex::new(r"(?mi)\$([^\.]+)").unwrap();
-    for (_, metric_def) in config.bin_metrics.iter_mut() {
-        if let Some(tmpl_ref) = metric_def.template.clone() {
-            let tmpl = config.metric_templates.get(&tmpl_ref.name).unwrap();
-            metric_def.raw.op = tmpl.op.clone();
-            metric_def.raw.threshold = tmpl.threshold;
-            let tmpl_query = Template::new(tmpl.query.clone()).with_regex(&custom_regex);
-            let data = {
-                let mut map: HashMap<&str, &str> = HashMap::new();
-                for (k, v) in tmpl_ref.vars.iter() {
-                    map.insert(k.as_str(), v.as_str());
-                }
-                map
-            };
-            metric_def.raw.query = tmpl_query.render(&data).unwrap();
-        } else if let Some(val) = metric_def.query.clone() {
-            metric_def.raw.query = val;
-        }
-        if let Some(val) = metric_def.op.clone() {
-            metric_def.raw.op = val;
-        }
-        if let Some(val) = metric_def.threshold {
-            metric_def.raw.threshold = val;
-        }
-    }
-    config
 }
 
 /// Get metrics from TSDB
@@ -389,9 +451,9 @@ async fn get_metrics(
     let mut graphite_targets: HashMap<&str, String> = HashMap::new();
     // Construct target=>query map
     for metric in metric_names.iter() {
-        match state.config.bin_metrics.get(metric) {
+        match state.bin_metrics.get(metric) {
             Some(m) => {
-                graphite_targets.insert(metric.as_str(), m.raw.query.clone());
+                graphite_targets.insert(metric.as_str(), m.query.clone());
             }
             _ => {}
         };
@@ -410,7 +472,7 @@ async fn get_metrics(
     let mut result: Vec<MetricData> = Vec::new();
     // tracing::debug!("Received following data: {:?}", raw_data);
     for data_element in raw_data.iter() {
-        match state.config.bin_metrics.get(&data_element.target) {
+        match state.bin_metrics.get(&data_element.target) {
             Some(metric) => {
                 // log::debug!("Data element {:?}", data_element);
                 let points: MetricPoints = BTreeMap::new();
@@ -420,10 +482,10 @@ async fn get_metrics(
                 };
                 for (val, ts) in data_element.datapoints.iter() {
                     let is_fulfilled = match *val {
-                        Some(x) => match metric.raw.op {
-                            CmpType::Lt => (x < metric.raw.threshold),
-                            CmpType::Gt => (x > metric.raw.threshold),
-                            CmpType::Eq => (x == metric.raw.threshold),
+                        Some(x) => match metric.op {
+                            CmpType::Lt => (x < metric.threshold),
+                            CmpType::Gt => (x > metric.threshold),
+                            CmpType::Eq => (x == metric.threshold),
                         },
                         None => false,
                     };
@@ -491,9 +553,9 @@ async fn handler_query(
             );
         } else if state.config.bin_metrics.contains_key(&tgt.target) {
             metrics.push(tgt.target.clone());
-        } else if state.config.expr_metrics.contains_key(&tgt.target) {
+        } else if state.expr_metrics.contains_key(&tgt.target) {
             expression_mode = true;
-            if let Some(m) = state.config.expr_metrics.get(&tgt.target) {
+            if let Some(m) = state.expr_metrics.get(&tgt.target) {
                 expression_metrics.push(tgt.target.clone());
                 metrics.extend(m.metrics.iter().cloned())
             }
@@ -519,7 +581,7 @@ async fn handler_query(
         let mut res: HashMap<String, Vec<(f32, u64)>> = HashMap::new();
         for (ts, ts_val) in tab.iter() {
             for target_hm in expression_metrics.iter() {
-                if let Some(hm_config) = state.config.expr_metrics.get(target_hm) {
+                if let Some(hm_config) = state.expr_metrics.get(target_hm) {
                     let result_metric_entry = res.entry(target_hm.into()).or_insert(Vec::new());
                     let mut context = HashMapContext::new();
                     for metric in hm_config.metrics.iter() {
@@ -527,12 +589,14 @@ async fn handler_query(
                             Some(&x) => x,
                             _ => false,
                         };
-                        context.set_value(metric.into(), Value::from(xval)).unwrap();
+                        context
+                            .set_value(metric.replace("-", "_").into(), Value::from(xval))
+                            .unwrap();
                     }
                     let mut expression_res: f32 = 0.0;
                     for expr in hm_config.expressions.iter() {
                         if expr.weight as f32 <= expression_res {
-                            //    continue;
+                            continue;
                         }
                         match eval_boolean_with_context(expr.expression.as_str(), &context) {
                             Ok(m) => {
@@ -699,5 +763,36 @@ mod test {
             max_data_points,
         ));
         mock.assert();
+    }
+
+    #[test]
+    fn test_config() {
+        let f = "
+        datasource:
+          url: 'https:/a.b'
+        server:
+          port: 3005
+        bin_metrics:
+          a:
+            query: test_query
+            op: lt
+            threshold: 15
+        expr_metrics:
+          test:
+            metrics:
+              - a
+              - b-c
+            expressions:
+              - expression: 'a + b-c'
+                weight: 1
+        ";
+        let config = Config::from_config_str(f);
+        let mut state = AppState::new(config);
+        state.process_config();
+
+        assert_eq!(
+            state.expr_metrics["test"].expressions[0].expression,
+            "a + b_c"
+        );
     }
 }
