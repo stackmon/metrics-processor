@@ -245,18 +245,21 @@ impl AppState {
                 // If we have "-" in the metric name evalexpr will treat it as minus operation. In order to
                 // avoid that replace "-" with "_" in the expression. Values will be renamed during
                 // evaluation.
+                let mut replacements: HashMap<String, String> = HashMap::new();
                 for metric in expression_def.metrics.iter() {
                     if metric.contains("-") {
-                        let rename = metric.replace("-", "_");
-                        for expr in expression_def.expressions.iter() {
-                            int_metric.expressions.push(MetricExpressionDef {
-                                expression: expr
-                                    .expression
-                                    .replace(metric, rename.clone().as_str()),
-                                weight: expr.weight,
-                            });
-                        }
+                        replacements.insert(metric.into(), metric.replace("-", "_"));
                     }
+                }
+                for expr in expression_def.expressions.iter() {
+                    let mut expression = expr.expression.clone();
+                    for (k, v) in replacements.iter() {
+                        expression = expression.replace(k, v);
+                    }
+                    int_metric.expressions.push(MetricExpressionDef {
+                        expression: expression,
+                        weight: expr.weight,
+                    });
                 }
                 self.expr_metrics.insert(metric_name.into(), int_metric);
             }
@@ -605,7 +608,7 @@ async fn handler_query(
                                 }
                             }
                             Err(e) => {
-                                tracing::debug!("Error {:?}", e);
+                                tracing::debug!("Error during evaluation of {:?} [context: {:?}]: {:?}", expr.expression, context, e);
                             }
                         }
                     }
@@ -782,8 +785,9 @@ mod test {
             metrics:
               - a
               - b-c
+              - d-e
             expressions:
-              - expression: 'a + b-c'
+              - expression: 'a + b-c && d-e'
                 weight: 1
         ";
         let config = Config::from_config_str(f);
@@ -792,7 +796,7 @@ mod test {
 
         assert_eq!(
             state.expr_metrics["test"].expressions[0].expression,
-            "a + b_c"
+            "a + b_c && d_e"
         );
     }
 }
