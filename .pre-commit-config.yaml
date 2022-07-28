@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: mdbook
+        name: mdbook
+        files: '^doc/*'
+        entry: 'mdbook'
+        args: ['build', 'doc']
+        language: 'system'

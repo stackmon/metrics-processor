@@ -1,0 +1,6 @@
+- hosts: all
+  tasks:
+    - name: Execute cargo command
+      ansible.builtin.command: "cargo {{ rust_cargo_command | default('build') }}"
+      args:
+        chdir: "{{ zuul.project.src_dir }}"

@@ -1,5 +1,5 @@
 - job:
-    name: cloudmon-metrics-build-image
+    name: cloudmon-metrics-processor-build-image
     parent: otc-build-container-image
     description: Build cloudmon-metrics container image
     provides: cloudmon-metrics-container-image
@@ -7,15 +7,15 @@
       container_images:
         - context: .
           registry: quay.io
-          repository: stackmon/cloudmon-metrics
-          target: cloudmon-metrics
+          repository: stackmon/metrics-processor
+          target: metrics-processor
           tags:
             &imagetag "{{ zuul.tag is defined | ternary([zuul.get('tag', '').split('.')[0], '.'.join(zuul.get('tag', '').split('.')[:2]), zuul.get('tag', '')], ['latest']) }}"
 
 - job:
-    name: cloudmon-metrics-upload-image
+    name: cloudmon-metrics-processor-upload-image
     parent: stackmon-upload-container-images
-    provides: cloudmon-metrics-container-image
+    provides: cloudmon-metrics-processor-container-image
     vars: *cloudmon-metrics_image_vars
 
 - project:
@@ -25,9 +25,9 @@
       jobs:
         - rust-build
         - rust-test
-        - cloudmon-metrics-build-image
+        - cloudmon-metrics-processor-build-image
     gate:
       jobs:
         - rust-build
         - rust-test
-        - cloudmon-metrics-upload-image
+        - cloudmon-metrics-processor-upload-image
