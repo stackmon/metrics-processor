@@ -1,4 +1,4 @@
-FROM rust:latest AS builder
+FROM docker.io/rust:latest AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN rustup target add x86_64-unknown-linux-musl

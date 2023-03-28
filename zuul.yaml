@@ -1,19 +1,20 @@
 - job:
     name: cloudmon-metrics-build-image
-    parent: otc-build-docker-image
+    parent: otc-build-container-image
     description: Build cloudmon-metrics container image
     provides: cloudmon-metrics-container-image
     vars: &cloudmon-metrics_image_vars
-      docker_images:
+      container_images:
         - context: .
-          repository: opentelekomcloud/cloudmon-metrics
+          registry: quay.io
+          repository: stackmon/cloudmon-metrics
           target: cloudmon-metrics
           tags:
             &imagetag "{{ zuul.tag is defined | ternary([zuul.get('tag', '').split('.')[0], '.'.join(zuul.get('tag', '').split('.')[:2]), zuul.get('tag', '')], ['latest']) }}"
 
 - job:
     name: cloudmon-metrics-upload-image
-    parent: otcinfra-upload-image-quay
+    parent: stackmon-upload-container-images
     provides: cloudmon-metrics-container-image
     vars: *cloudmon-metrics_image_vars
 
@@ -22,7 +23,11 @@
     default-branch: main
     check:
       jobs:
+        - rust-build
+        - rust-test
         - cloudmon-metrics-build-image
     gate:
       jobs:
+        - rust-build
+        - rust-test
         - cloudmon-metrics-upload-image
