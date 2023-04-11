@@ -29,7 +29,7 @@ RUN cargo build --target x86_64-unknown-linux-musl --release -v
 ##############
 ## Final image
 ##############
-FROM scratch as cloudmon-metrics
+FROM scratch as metrics-processor
 
 # Import from builder.
 COPY --from=builder /etc/passwd /etc/passwd
@@ -38,10 +38,11 @@ COPY --from=builder /etc/group /etc/group
 WORKDIR /cloudmon
 
 # Copy our build
-COPY --from=builder /cloudmon/target/x86_64-unknown-linux-musl/release/cloudmon-metrics ./
+COPY --from=builder /cloudmon/target/x86_64-unknown-linux-musl/release/cloudmon-metrics-convertor ./
+COPY --from=builder /cloudmon/target/x86_64-unknown-linux-musl/release/cloudmon-metrics-reporter ./
 
 # Use an unprivileged user.
 USER cloudmon:cloudmon
 
 ENV PATH=/cloudmon
-CMD ["/cloudmon/cloudmon-metrics"]
+CMD ["/cloudmon/cloudmon-metrics-convertor"]
