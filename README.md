@@ -1,4 +1,4 @@
-# Cloudmon-metrics
+# Metrics processor
 
 When monitoring cloud it is not unusual to
 have a variety of metrics types (latencies,
@@ -12,9 +12,17 @@ some issues, red - complete outage).
 Depending on the used TSDB there might be no
 way to do this at all.
 
-CloudMon-metrics is a there to address 2 primary needs:
+metrics-processor is there to address 2 primary needs:
 
-- xconvert series of raw metrics of different
+- convert series of raw metrics of different
   types into single semaphore-like metric
-- xinform status dashboard once certain
+- inform status dashboard once certain
   component status is not healthy.
+
+
+## Project structure
+
+- src - rust source code
+- doc - mdbook sources for the documentation
+- docs - mdbook rendered content (built from `doc`) - temporarily, in future
+  documentation will be reworked.
