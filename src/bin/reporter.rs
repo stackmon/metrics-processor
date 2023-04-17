@@ -56,7 +56,7 @@ async fn main() {
     tracing::info!("Starting cloudmon-metrics-reporter");
 
     // Parse config
-    let config = Config::from_config_file("config.yaml");
+    let config = Config::new("config.yaml").unwrap();
 
     // Set up CTRL+C handlers
     let ctrl_c = async {
@@ -124,11 +124,11 @@ async fn metric_watcher(config: &Config) {
             }
         }
     }
-    let sdb_config = config.status_dashboard.as_ref().expect("Status dashboard section is missing");
-    let status_report_url = format!(
-        "{}/api/v1/component_status",
-        sdb_config.url.clone(),
-    );
+    let sdb_config = config
+        .status_dashboard
+        .as_ref()
+        .expect("Status dashboard section is missing");
+    let status_report_url = format!("{}/api/v1/component_status", sdb_config.url.clone(),);
     let mut headers = HeaderMap::new();
     if let Some(ref secret) = sdb_config.secret {
         let key: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();

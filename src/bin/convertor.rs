@@ -55,9 +55,9 @@ async fn main() -> Result<(), Error> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!("Starting cloudmon-metrics");
+    tracing::info!("Starting cloudmon-metrics-convertor");
 
-    let config = Config::from_config_file("config.yaml");
+    let config = Config::new("config.yaml").unwrap();
     let mut state = AppState::new(config);
     state.process_config();
     let server_addr = state.config.get_socket_addr().clone();
@@ -111,7 +111,7 @@ async fn main() -> Result<(), Error> {
         .await
         .unwrap();
 
-    tracing::info!("Stopped cloudmon-metrics");
+    tracing::info!("Stopped cloudmon-metrics-convertor");
     Ok(())
 }
 

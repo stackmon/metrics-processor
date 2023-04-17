@@ -35,11 +35,16 @@
 //!         weight: 1
 //! ```
 
+use glob::glob;
+
 use serde::Deserialize;
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    path::Path,
 };
+
+use config::{ConfigError, Environment, File};
 
 use crate::types::{BinaryMetricRawDef, EnvironmentDef, FlagMetricDef, ServiceHealthDef};
 
@@ -63,18 +68,52 @@ pub struct Config {
 }
 
 impl Config {
-    /// Returns a configuration object from a yaml config file path.
-    pub fn from_config_file(config_file: &str) -> Self {
-        let f = std::fs::File::open(config_file).expect("Could not open file.");
-        let config: Config = serde_yaml::from_reader(f).expect("Could not read values.");
-        return config;
+    /// Returns a configuration object from a yaml config file path with merged values from
+    /// environment variables prefixed with "MP". When setting values in the environment variables
+    /// use "__" for sublements separator.
+    pub fn new(config_file: &str) -> Result<Self, ConfigError> {
+        let path = Path::new(config_file)
+            .canonicalize()
+            .expect("Can not resolve path to the config.yaml");
+        let mut s = config::Config::builder()
+            // Start off by merging in the requested configuration file
+            .add_source(File::with_name(path.to_str().unwrap()));
+
+        // Read and merge conf.d config parts
+        let configs_glob = format!(
+            "{}/conf.d/*.yaml",
+            path.parent()
+                .expect("Need parent to config.yaml")
+                .to_str()
+                .unwrap()
+        );
+        tracing::trace!("Analyzing {:?} as conf.d parts", configs_glob);
+        for entry in glob(configs_glob.as_str()).unwrap() {
+            tracing::debug!("Add {:?} config part file", entry);
+            if let Ok(path) = entry {
+                s = s.add_source(File::with_name(path.to_str().unwrap()));
+            }
+        }
+
+        // merge environment variables (subelements separated by "__")
+        // MP_STATUS_DASHBOARD__SECRET goes to status_dashboard.secret
+        s = s.add_source(
+            Environment::with_prefix("MP")
+                .prefix_separator("_")
+                .separator("__"),
+        );
+
+        s.build()?.try_deserialize()
     }
 
     /// Returns a configuration object from a string representing configuration file
     #[allow(dead_code)]
     pub fn from_config_str(data: &str) -> Self {
-        let config: Config = serde_yaml::from_str(data).expect("Could not read values.");
-        return config;
+        let s = config::Config::builder()
+            .add_source(File::from_str(data, config::FileFormat::Yaml))
+            .build()
+            .unwrap();
+        s.try_deserialize().unwrap()
     }
 
     /// Returns socket address to use for binding
@@ -140,45 +179,136 @@ pub struct StatusDashboardConfig {
 mod test {
     use crate::config;
 
-    #[test]
-    fn test_config_file() {
-        let config_str1 = "
-        datasource:
-          url: 'https:/a.b'
-        server:
-          port: 3005
-        templates:
-          tmpl1:
-            query: dummy_query
-            op: lt
-            threshold: 1
+    use std::env;
+    use std::fs::{create_dir, File};
+    use std::io::Write;
+    use tempfile::Builder;
+
+    const CONFIG_STR1: &str = "
+    datasource:
+      url: 'https:/a.b'
+    server:
+      port: 3005
+    templates:
+      tmpl1:
+        query: dummy_query
+        op: lt
+        threshold: 1
+    environments:
+      - name: env1
+    flag_metrics:
+      - name: a
+        service: b
+        template:
+          name: tmpl1
         environments:
           - name: env1
-        flag_metrics:
-          - name: a
-            service: b
-            template:
-              name: tmpl1
-            environments:
-              - name: env1
-                threshold: 2
-        health_metrics:
-          test:
-            service: a
-            category: compute
-            metrics:
-              - a
-              - b-c
-              - d-e
-            expressions:
-              - expression: 'a + b-c && d-e'
-                weight: 1
-        ";
-        let _config = config::Config::from_config_str(config_str1);
+            threshold: 2
+    health_metrics:
+      test:
+        service: a
+        category: compute
+        metrics:
+          - a
+          - b-c
+          - d-e
+        expressions:
+          - expression: 'a + b-c && d-e'
+            weight: 1
+    status_dashboard:
+      url: abc
+    ";
+    const CONFIG_PART_STR: &str = "
+    datasource:
+      url: 'https:/a.b'
+    server:
+      port: 3005
+    templates:
+      tmpl1:
+        query: dummy_query
+        op: lt
+        threshold: 1
+    environments:
+      - name: env1
+    health_metrics:
+      test:
+        service: a
+        category: compute
+        metrics:
+          - a
+          - b-c
+          - d-e
+        expressions:
+          - expression: 'a + b-c && d-e'
+            weight: 1
+    status_dashboard:
+      url: abc
+    ";
+
+    const CONFIG_FLAGS: &str = "
+    flag_metrics:
+      - name: a
+        service: b
+        template:
+          name: tmpl1
+        environments:
+          - name: env1
+            threshold: 2
+    ";
+
+    /// Test general config parsing
+    #[test]
+    fn test_config_file() {
+        // Create a file inside of `std::env::temp_dir()`.
+        let mut config_file = Builder::new().suffix(".yaml").tempfile().unwrap();
+
+        config_file.write_all(CONFIG_STR1.as_bytes()).unwrap();
+
+        let _config = config::Config::new(config_file.path().to_str().unwrap()).unwrap();
         assert_eq!(_config.flag_metrics.len(), 1);
         for flag in _config.flag_metrics.iter() {
             assert_eq!("a", &flag.name);
             assert_eq!("b", &flag.service);
         }
+    }
+
+    /// Test merging config with env vars
+    #[test]
+    fn test_merge_env() {
+        // Create a file inside of `std::env::temp_dir()`.
+        let mut config_file = Builder::new().suffix(".yaml").tempfile().unwrap();
+
+        config_file.write_all(CONFIG_STR1.as_bytes()).unwrap();
+
+        env::set_var("MP_STATUS_DASHBOARD__SECRET", "val");
+        let _config = config::Config::new(config_file.path().to_str().unwrap()).unwrap();
+        assert_eq!(_config.status_dashboard.unwrap().secret.unwrap(), "val");
+    }
+
+    /// Test merging of the config with conf.d elements
+    #[test]
+    fn test_merge_parts() {
+        // Create a file inside of `std::env::temp_dir()`.
+        let dir = Builder::new().tempdir().unwrap();
+        let main_config_file_path = dir.path().join("config.yaml");
+        let mut main_config_file = File::create(main_config_file_path.clone()).unwrap();
+        let confd_file_path = dir.path().join("conf.d");
+        create_dir(&confd_file_path).expect("Cannot create tmp/conf.d");
+        let mut flags = File::create(&confd_file_path.as_path().join("flags.yaml")).unwrap();
+        println!("flags are {:?}", flags);
+
+        main_config_file
+            .write_all(CONFIG_PART_STR.as_bytes())
+            .unwrap();
+
+        flags.write_all(CONFIG_FLAGS.as_bytes()).unwrap();
+
+        let _config = config::Config::new(main_config_file_path.clone().to_str().unwrap()).unwrap();
+        for flag in _config.flag_metrics.iter() {
+            assert_eq!("a", &flag.name);
+            assert_eq!("b", &flag.service);
+        }
+
+        dir.close().unwrap();
     }
 }
