@@ -1,3 +1,4 @@
+---
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0
@@ -9,6 +10,20 @@ repos:
         exclude: '^docs/.*$'
   - repo: local
     hooks:
+      - id: fmt
+        name: fmt
+        description: Format files with cargo fmt.
+        entry: cargo fmt --
+        language: system
+        files: '\.rs$'
+        args: []
+      - id: cargo-check
+        name: cargo check
+        description: Check the package for errors.
+        entry: cargo check
+        language: system
+        files: '\.rs$'
+        pass_filenames: false
       - id: mdbook
         name: mdbook
         files: 'doc/book.md'
