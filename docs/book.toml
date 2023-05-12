@@ -1,9 +1,0 @@
-[book]
-authors = ["Artem Goncharov"]
-language = "en"
-multilingual = false
-src = "."
-title = "CloudMon metrics processor"
-
-[build]
-build-dir = "../docs"
