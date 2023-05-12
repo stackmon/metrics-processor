@@ -22,21 +22,21 @@ axum = { version="~0.6" }
 axum-macros = { version="~0.3" }
 chrono = "~0.4"
 config = "~0.13"
-evalexpr = "~8.1"
+evalexpr = "~9.0"
 glob = "~0.3"
 jwt = "~0.16"
 itertools = "~0.10"
 hmac = "~0.12"
 http = "~0.2"
 new_string_template = "~1.4"
-regex = "~1.7"
+regex = "~1.8"
 reqwest = { version = "~0.11", default-features = false, features = ["rustls-tls", "json"] }
 serde = { version = "~1.0", features = ["derive"] }
 serde_json = "~1.0"
 serde_yaml = "~0.9"
 serde_qs = "~0.12"
 sha2 = "~0.10"
-tokio = { version = "~1.26", features = ["full"] }
+tokio = { version = "~1.28", features = ["full"] }
 tower = { version = "~0.4" }
 tower-http = { version = "~0.4", features = ["trace", "request-id", "util"] }
 tracing = "~0.1"
