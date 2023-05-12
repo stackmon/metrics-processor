@@ -96,7 +96,7 @@ pub fn get_graphite_routes() -> Router<AppState> {
         .route("/functions", get(handler_functions))
         .route(
             "/metrics/find",
-            get(handler_metrics_find), /*.post(handler_metrics_find)*/
+            get(handler_metrics_find_get).post(handler_metrics_find_post),
         )
         .route("/render", get(handler_render).post(handler_render))
         .route("/tags/autoComplete/tags", get(handler_tags));
@@ -164,8 +164,16 @@ pub fn find_metrics(find_request: MetricsQuery, state: AppState) -> Vec<Metric> 
                                 allow_children: 0,
                                 expandable: 0,
                                 leaf: 1,
-                                id: x.clone(),
-                                text: x.clone(),
+                                id: x
+                                    .clone()
+                                    .get((target_parts[2].len() + 1)..)
+                                    .expect("Cannot strip the flag name")
+                                    .to_string(),
+                                text: x
+                                    .clone()
+                                    .get((target_parts[2].len() + 1)..)
+                                    .expect("Cannot strip the flag name")
+                                    .to_string(),
                             }),
                     );
                 } else {
@@ -201,12 +209,30 @@ pub fn find_metrics(find_request: MetricsQuery, state: AppState) -> Vec<Metric> 
     return metrics;
 }
 
-/// Handler for graphite find metrics API
+/// POST Handler for graphite find metrics API
 #[debug_handler]
-pub async fn handler_metrics_find(
+pub async fn handler_metrics_find_post(
+    State(state): State<AppState>,
+    JsonOrForm(query): JsonOrForm<MetricsQuery>,
+) -> impl IntoResponse {
+    tracing::debug!("Processing find query={:?}", query);
+    let metrics: Vec<Metric> = find_metrics(query, state);
+    return (
+        StatusCode::OK,
+        Json(json!(metrics
+            .into_iter()
+            .sorted_by(|a, b| Ord::cmp(&a.text, &b.text))
+            .collect::<Vec<Metric>>())),
+    );
+}
+
+/// GET Handler for graphite find metrics API
+#[debug_handler]
+pub async fn handler_metrics_find_get(
     State(state): State<AppState>,
     Query(query): Query<MetricsQuery>,
 ) -> impl IntoResponse {
+    tracing::debug!("Processing find query={:?}", query);
     let metrics: Vec<Metric> = find_metrics(query, state);
     return (
         StatusCode::OK,
@@ -245,7 +271,7 @@ pub async fn handler_render(
     let target_parts: Vec<&str> = target.split(".").collect();
     match target_parts[0] {
         "flag" => {
-            tracing::debug!("render flags");
+            tracing::trace!("Render flags for {:?}", target);
             let mut graphite_targets: HashMap<String, String> = HashMap::new();
             if target_parts.len() == 4 {
                 let environment = target_parts[1];
@@ -323,7 +349,7 @@ pub async fn handler_render(
             }
         }
         "health" => {
-            tracing::debug!("render health");
+            tracing::trace!("Render Health for {:?}", target);
             if target_parts.len() == 3 {
                 let from = from.unwrap();
                 let to = to.unwrap();
@@ -616,7 +642,7 @@ mod test {
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             body,
-            json!([{"allowChildren": 0, "expandable": 0, "id": "srvA.metric-1", "leaf": 1, "text": "srvA.metric-1"},{"allowChildren": 0, "expandable": 0, "id": "srvA.metric-2", "leaf": 1, "text": "srvA.metric-2"}])
+            json!([{"allowChildren": 0, "expandable": 0, "id": "metric-1", "leaf": 1, "text": "metric-1"},{"allowChildren": 0, "expandable": 0, "id": "metric-2", "leaf": 1, "text": "metric-2"}])
         );
 
         let response = app
