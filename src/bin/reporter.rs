@@ -155,8 +155,8 @@ async fn metric_watcher(config: &Config) {
                     .query(&[
                         ("environment", env.name.clone()),
                         ("service", component.0.clone()),
-                        ("from", "-3min".to_string()),
-                        ("to", "-2min".to_string()),
+                        ("from", "-4min".to_string()),
+                        ("to", "-1min".to_string()),
                     ])
                     .send()
                     .await
