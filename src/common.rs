@@ -127,6 +127,12 @@ pub async fn get_service_health(
                 Ok(m) => {
                     if m {
                         expression_res = expr.weight as u8;
+                        tracing::debug!(
+                            "Summary of evaluation expression for service: {:?}, expression: {:?}, weight: {:?}",
+                            service,
+                            expr.expression,
+                            expr.weight
+                        );
                     }
                 }
                 Err(e) => {
