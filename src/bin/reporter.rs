@@ -135,7 +135,7 @@ async fn metric_watcher(config: &Config) {
         let mut claims = BTreeMap::new();
         claims.insert("stackmon", "dummy");
         let token_str = claims.sign_with_key(&key).unwrap();
-        let bearer = format!("bearer {}", token_str);
+        let bearer = format!("Bearer {}", token_str);
         headers.insert(AUTHORIZATION, bearer.parse().unwrap());
     }
     loop {
