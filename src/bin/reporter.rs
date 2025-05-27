@@ -128,7 +128,7 @@ async fn metric_watcher(config: &Config) {
         .status_dashboard
         .as_ref()
         .expect("Status dashboard section is missing");
-    let status_report_url = format!("{}/api/v1/component_status", sdb_config.url.clone(),);
+    let status_report_url = format!("{}/v1/component_status", sdb_config.url.clone(),);
     let mut headers = HeaderMap::new();
     if let Some(ref secret) = sdb_config.secret {
         let key: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();
