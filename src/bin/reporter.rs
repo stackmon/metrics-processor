@@ -13,6 +13,8 @@ use reqwest::{
 use tokio::signal;
 use tokio::time::{sleep, Duration};
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
@@ -24,7 +26,7 @@ use jwt::SignWithKey;
 use sha2::Sha256;
 use std::collections::BTreeMap;
 
-#[derive(Clone, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct ComponentAttribute {
     pub name: String,
     pub value: String,
@@ -36,11 +38,26 @@ pub struct Component {
     pub attributes: Vec<ComponentAttribute>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-pub struct ComponentStatus {
+/// Structure for deserializing components from Status Dashboard API v2 (/v2/components)
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct StatusDashboardComponent {
+    pub id: u32,
     pub name: String,
-    pub impact: u8,
+    #[serde(default)]
     pub attributes: Vec<ComponentAttribute>,
+}
+
+/// Structure for serializing incident data for Status Dashboard API v2 (/v2/incidents)
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct IncidentData {
+    pub title: String,
+    pub impact: u8,
+    pub components: Vec<u32>,
+    pub start_date: DateTime<Utc>,
+    #[serde(default)]
+    pub system: bool,
+    #[serde(rename = "type")]
+    pub incident_type: String,
 }
 
 #[tokio::main]
@@ -86,14 +103,66 @@ async fn main() {
     tracing::info!("Stopped cloudmon-metrics-reporting");
 }
 
+/// Fetches components from the Status Dashboard API.
+async fn fetch_components(
+    req_client: &reqwest::Client,
+    components_url: &str,
+) -> Result<Vec<StatusDashboardComponent>> {
+    let response = req_client.get(components_url).send().await?;
+    response.error_for_status_ref()?;
+    let components = response.json::<Vec<StatusDashboardComponent>>().await?;
+    Ok(components)
+}
+
+/// Fetches components with a retry mechanism.
+async fn fetch_components_with_retry(
+    req_client: &reqwest::Client,
+    components_url: &str,
+) -> Option<Vec<StatusDashboardComponent>> {
+    let mut attempts = 0;
+    loop {
+        match fetch_components(req_client, components_url).await {
+            Ok(components) => {
+                tracing::info!("Successfully fetched {} components.", components.len());
+                return Some(components);
+            }
+            Err(e) => {
+                attempts += 1;
+                tracing::error!("Failed to fetch components (attempt {}/3): {}", attempts, e);
+                if attempts >= 3 {
+                    tracing::error!("Could not fetch components after 3 attempts. Giving up.");
+                    return None;
+                }
+                tracing::info!("Retrying in 60 seconds...");
+                sleep(Duration::from_secs(60)).await;
+            }
+        }
+    }
+}
+
+/// Builds a cache mapping (ComponentName, Attributes) -> ComponentID.
+fn build_component_id_cache(
+    components: Vec<StatusDashboardComponent>,
+) -> HashMap<(String, Vec<ComponentAttribute>), u32> {
+    components
+        .into_iter()
+        .map(|c| {
+            let mut attrs = c.attributes;
+            attrs.sort();
+            ((c.name, attrs), c.id)
+        })
+        .collect()
+}
+
 async fn metric_watcher(config: &Config) {
     tracing::info!("Starting metric reporter thread");
-    // Init reqwest client
+    // Init reqwest client.
     let req_client: reqwest::Client = ClientBuilder::new()
-        .timeout(Duration::from_secs(2 as u64))
+        .timeout(Duration::from_secs(10 as u64))
         .build()
         .unwrap();
-    // Endless loop
+
+    // This is the logic to build a component lookup table from config.
     let mut components: HashMap<String, HashMap<String, Component>> = HashMap::new();
     for env in config.environments.iter() {
         let comp_env_entry = components.entry(env.name.clone()).or_insert(HashMap::new());
@@ -124,11 +193,37 @@ async fn metric_watcher(config: &Config) {
             }
         }
     }
+
     let sdb_config = config
         .status_dashboard
         .as_ref()
         .expect("Status dashboard section is missing");
-    let status_report_url = format!("{}/v1/component_status", sdb_config.url.clone(),);
+
+    // Fetch components from Status Dashboard and build a cache to resolve component name to ID.
+    let components_url = format!("{}/v2/components", sdb_config.url.clone());
+    let mut component_id_cache =
+        match fetch_components_with_retry(&req_client, &components_url).await {
+            Some(components) => {
+                if components.is_empty() {
+                    tracing::error!(
+                        "Component list from status-dashboard is empty. Reporter cannot proceed."
+                    );
+                    return;
+                }
+                build_component_id_cache(components)
+            }
+            None => {
+                tracing::error!("Failed to fetch initial component list. Reporter cannot proceed.");
+                return;
+            }
+        };
+    tracing::info!(
+        "Successfully cached {} components from status-dashboard.",
+        component_id_cache.len()
+    );
+
+    // Prepare for incident reporting
+    let incidents_url = format!("{}/v2/incidents", sdb_config.url.clone());
     let mut headers = HeaderMap::new();
     if let Some(ref secret) = sdb_config.secret {
         let key: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();
@@ -139,10 +234,29 @@ async fn metric_watcher(config: &Config) {
         headers.insert(AUTHORIZATION, bearer.parse().unwrap());
     }
     loop {
-        // For every env from config
+        // Refresh component cache before checking metrics.
+        tracing::info!("Refreshing component cache...");
+        match fetch_components(&req_client, &components_url).await {
+            Ok(components) if !components.is_empty() => {
+                component_id_cache = build_component_id_cache(components);
+                tracing::info!(
+                    "Successfully refreshed component cache. New size: {}",
+                    component_id_cache.len()
+                );
+            }
+            Ok(_) => {
+                tracing::warn!("Component list from status-dashboard is empty. Using old cache.")
+            }
+            Err(e) => tracing::warn!(
+                "Failed to refresh component cache, using old one. Error: {}",
+                e
+            ),
+        };
+
+        // For every env from config.
         for env in config.environments.iter() {
             tracing::trace!("env {:?}", env);
-            // For every component (health_metric service)
+            // For every component (health_metric service).
             for component in config.health_metrics.iter() {
                 tracing::trace!("Component {:?}", component.0);
                 // Query metric-convertor for the status
@@ -180,34 +294,60 @@ async fn metric_watcher(config: &Config) {
                                                 .get(component.0)
                                                 .unwrap();
                                             tracing::info!("Component to report: {:?}", component);
-                                            let body = ComponentStatus {
-                                                name: component.name.clone(),
-                                                impact: last.1,
-                                                attributes: component.attributes.clone(),
-                                            };
-                                            let res = req_client
-                                                .post(&status_report_url)
-                                                .headers(headers.clone())
-                                                .json(&body)
-                                                .send()
-                                                .await;
-                                            match res {
-                                                Ok(rsp) => {
-                                                    if rsp.status().is_client_error() {
+
+                                            // Search for component ID in the cache using name and attributes.
+                                            let mut search_attrs = component.attributes.clone();
+                                            search_attrs.sort();
+                                            let cache_key = (component.name.clone(), search_attrs);
+
+                                            if let Some(component_id) =
+                                                component_id_cache.get(&cache_key)
+                                            {
+                                                tracing::info!(
+                                                    "Found component ID {} in cache.",
+                                                    component_id
+                                                );
+
+                                                // Build IncidentData body for API v2
+                                                let body = IncidentData {
+                                                    title: component.name.clone(),
+                                                    impact: last.1,
+                                                    components: vec![*component_id],
+                                                    start_date: Utc::now(),
+                                                    system: true,
+                                                    incident_type: "incident".to_string(),
+                                                };
+
+                                                let res = req_client
+                                                    .post(&incidents_url)
+                                                    .headers(headers.clone())
+                                                    .json(&body)
+                                                    .send()
+                                                    .await;
+                                                match res {
+                                                    Ok(rsp) => {
+                                                        if !rsp.status().is_success() {
+                                                            tracing::error!(
+                                                                "Error reporting incident: [{}] {:?}",
+                                                                rsp.status(),
+                                                                rsp.text().await
+                                                            );
+                                                        } else {
+                                                            tracing::info!("Successfully reported incident for component '{}'.", component.name);
+                                                        }
+                                                    }
+                                                    Err(e) => {
                                                         tracing::error!(
-                                                            "Error: [{}] {:?}",
-                                                            rsp.status(),
-                                                            rsp.text().await
+                                                            "Error during sending post request for incident: {}",
+                                                            e
                                                         );
                                                     }
                                                 }
-
-                                                Err(e) => {
-                                                    tracing::error!(
-                                                        "Error during posting component status: {}",
-                                                        e
-                                                    );
-                                                }
+                                            } else {
+                                                tracing::error!(
+                                                    "Component with name '{}' and attributes {:?} not found in status-dashboard cache.",
+                                                    component.name, component.attributes
+                                                );
                                             }
                                         }
                                     }
