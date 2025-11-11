@@ -14,7 +14,7 @@ use tokio::signal;
 use tokio::time::{sleep, Duration};
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
@@ -299,6 +299,14 @@ async fn metric_watcher(config: &Config) {
                                         // Is metric showing issues?
                                         if last.1 > 0 {
                                             // 0 means OK
+                                            let shifted_date = Utc
+                                                .timestamp_opt(last.0 as i64, 0)
+                                                .single()
+                                                .map(|ts| ts - chrono::Duration::seconds(1))
+                                                .unwrap_or_else(|| {
+                                                    Utc::now() - chrono::Duration::seconds(1)
+                                                });
+
                                             tracing::info!("Bad status found: {}", last.1);
                                             let component = components_from_config
                                                 .get(&env.name)
@@ -372,10 +380,11 @@ async fn metric_watcher(config: &Config) {
                                                         .to_string(),
                                                     impact: last.1,
                                                     components: vec![id],
-                                                    start_date: Utc::now(),
+                                                    start_date: shifted_date,
                                                     system: true,
                                                     incident_type: "incident".to_string(),
                                                 };
+                                                tracing::debug!("IncidentData body: {:?}", body);
                                                 let res = req_client
                                                     .post(&incidents_url)
                                                     .headers(headers.clone())

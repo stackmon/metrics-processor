@@ -70,14 +70,18 @@ async fn health_handler(
     let statuses = state.lock().unwrap();
     let status_value = statuses.get(&key).cloned().unwrap_or(0);
 
+    let metric_time = Utc::now().timestamp();
     let response = ServiceHealthResponse {
         name: params.service.clone(),
         service_category: "mock_category".to_string(),
         environment: params.environment.clone(),
-        metrics: vec![(Utc::now().timestamp(), status_value)],
+        metrics: vec![(metric_time, status_value)],
     };
 
-    println!("Responding with status: {}", status_value);
+    println!(
+        "Responding with status: {}, time: {}",
+        status_value, metric_time
+    );
     (StatusCode::OK, Json(response))
 }
 
