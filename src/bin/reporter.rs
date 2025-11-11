@@ -310,10 +310,29 @@ async fn metric_watcher(config: &Config) {
                                             // Search for component ID in the cache using name and attributes.
                                             let mut search_attrs = component.attributes.clone();
                                             search_attrs.sort();
-                                            let cache_key = (component.name.clone(), search_attrs);
+                                            let mut required_attrs = component.attributes.clone();
+                                            required_attrs.sort();
 
-                                            let mut component_id =
-                                                component_id_cache.get(&cache_key);
+                                            let find_id =
+                                                |cache: &HashMap<
+                                                    (String, Vec<ComponentAttribute>),
+                                                    u32,
+                                                >| {
+                                                    cache
+                                                        .iter()
+                                                        .find(|((name, attrs), _id)| {
+                                                            if name != &component.name {
+                                                                return false;
+                                                            }
+                                                            required_attrs
+                                                                .iter()
+                                                                .all(|r| attrs.contains(r))
+                                                        })
+                                                        .map(|(_, id)| *id)
+                                                };
+
+                                            // First attemption to find Component
+                                            let mut component_id = find_id(&component_id_cache);
 
                                             // If component not found, refresh cache and try again.
                                             if component_id.is_none() {
@@ -321,6 +340,7 @@ async fn metric_watcher(config: &Config) {
                                                     "Component '{}' with attributes {:?} not found in cache. Attempting to refresh.",
                                                     component.name, component.attributes
                                                 );
+
                                                 match update_component_cache(
                                                     &req_client,
                                                     &components_url,
@@ -330,8 +350,7 @@ async fn metric_watcher(config: &Config) {
                                                 {
                                                     Ok(new_cache) => {
                                                         component_id_cache = new_cache;
-                                                        component_id =
-                                                            component_id_cache.get(&cache_key);
+                                                        component_id = find_id(&component_id_cache);
                                                     }
                                                     Err(e) => {
                                                         tracing::warn!("Failed to refresh component cache, using old one. Error: {}", e);
@@ -352,7 +371,7 @@ async fn metric_watcher(config: &Config) {
                                                     description: "System-wide incident affecting multiple components. Created automatically."
                                                         .to_string(),
                                                     impact: last.1,
-                                                    components: vec![*id],
+                                                    components: vec![id],
                                                     start_date: Utc::now(),
                                                     system: true,
                                                     incident_type: "incident".to_string(),

@@ -25,6 +25,9 @@ struct HealthQuery {
 /// Structure of the response which waits reporter.rs
 #[derive(Serialize, Debug)]
 struct ServiceHealthResponse {
+    name: String,
+    service_category: String,
+    environment: String,
     metrics: Vec<(i64, u8)>,
 }
 
@@ -68,6 +71,9 @@ async fn health_handler(
     let status_value = statuses.get(&key).cloned().unwrap_or(0);
 
     let response = ServiceHealthResponse {
+        name: params.service.clone(),
+        service_category: "mock_category".to_string(),
+        environment: params.environment.clone(),
         metrics: vec![(Utc::now().timestamp(), status_value)],
     };
 
