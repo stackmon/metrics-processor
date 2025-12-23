@@ -1,6 +1,8 @@
 //! Common methods
 //!
-use crate::types::{AppState, CloudMonError, CmpType, FlagMetric, ServiceHealthData};
+use crate::types::{
+    AppState, CloudMonError, CmpType, FlagMetric, ServiceHealthData, ServiceHealthPoint,
+};
 use chrono::DateTime;
 use evalexpr::*;
 use std::collections::{BTreeMap, HashMap};
@@ -146,7 +148,19 @@ pub async fn get_service_health(
                 }
             }
         }
-        result.push((*ts, expression_res));
+        // Determine which metrics were true at this timestamp.
+        let mut triggered: Vec<String> = Vec::new();
+        for (mname, present) in ts_val.iter() {
+            if *present {
+                triggered.push(mname.clone());
+            }
+        }
+
+        result.push(ServiceHealthPoint {
+            ts: *ts,
+            value: expression_res,
+            triggered,
+        });
     }
 
     tracing::debug!("Summary data: {:?}, length={}", result, result.len());

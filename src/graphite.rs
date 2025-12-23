@@ -353,7 +353,7 @@ pub async fn handler_render(
             if target_parts.len() == 3 {
                 let from = from.unwrap();
                 let to = to.unwrap();
-                if let Ok(service_health_data) = get_service_health(
+                    if let Ok(service_health_data) = get_service_health(
                     &state,
                     target_parts[2],
                     target_parts[1],
@@ -366,7 +366,7 @@ pub async fn handler_render(
                     return (
                         StatusCode::OK,
                         Json(
-                            json!([{"target": target_parts[2], "datapoints": service_health_data.iter().map(|x| (Some(x.1 as f32), x.0)).collect::<Vec<(Option<f32>, u32)>>()}]),
+                            json!([{"target": target_parts[2], "datapoints": service_health_data.iter().map(|x| (Some(x.value as f32), x.ts)).collect::<Vec<(Option<f32>, u32)>>()}]),
                         ),
                     );
                 }

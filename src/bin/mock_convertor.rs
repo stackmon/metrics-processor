@@ -24,11 +24,19 @@ struct HealthQuery {
 
 /// Structure of the response which waits reporter.rs
 #[derive(Serialize, Debug)]
+struct ServiceHealthPoint {
+    ts: u32,
+    value: u8,
+    #[serde(default)]
+    triggered: Vec<String>,
+}
+
+#[derive(Serialize, Debug)]
 struct ServiceHealthResponse {
     name: String,
     service_category: String,
     environment: String,
-    metrics: Vec<(i64, u8)>,
+    metrics: Vec<ServiceHealthPoint>,
 }
 
 /// State of the mock server. Mutex provides live changes.
@@ -36,10 +44,8 @@ type AppState = Arc<Mutex<HashMap<String, u8>>>;
 
 #[tokio::main]
 async fn main() {
-    // Key "environment:service", value - status.
     let health_statuses: AppState = Arc::new(Mutex::new(HashMap::new()));
 
-    // Initial state
     // 0 = OK, >0 = Problem
     health_statuses
         .lock()
@@ -70,12 +76,23 @@ async fn health_handler(
     let statuses = state.lock().unwrap();
     let status_value = statuses.get(&key).cloned().unwrap_or(0);
 
-    let metric_time = Utc::now().timestamp();
+    let metric_time = Utc::now().timestamp() as u32;
+
+    let triggered = if status_value > 0 {
+        vec![format!("{}.{}", params.service, "api_down")]
+    } else {
+        Vec::new()
+    };
+
     let response = ServiceHealthResponse {
         name: params.service.clone(),
         service_category: "mock_category".to_string(),
         environment: params.environment.clone(),
-        metrics: vec![(metric_time, status_value)],
+        metrics: vec![ServiceHealthPoint {
+            ts: metric_time,
+            value: status_value,
+            triggered,
+        }],
     };
 
     println!(

@@ -16,6 +16,7 @@ use tokio::time::{sleep, Duration};
 use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use std::collections::HashMap;
 
@@ -297,23 +298,44 @@ async fn metric_watcher(config: &Config) {
                                     // Peek at last metric in the vector.
                                     if let Some(last) = data.metrics.pop() {
                                         // Is metric showing issues?
-                                        if last.1 > 0 {
+                                        if last.value > 0 {
                                             // 0 means OK
                                             let shifted_date = Utc
-                                                .timestamp_opt(last.0 as i64, 0)
+                                                .timestamp_opt(last.ts as i64, 0)
                                                 .single()
                                                 .map(|ts| ts - chrono::Duration::seconds(1))
                                                 .unwrap_or_else(|| {
                                                     Utc::now() - chrono::Duration::seconds(1)
                                                 });
 
-                                            tracing::info!("Bad status found: {}", last.1);
                                             let component = components_from_config
                                                 .get(&env.name)
                                                 .unwrap()
                                                 .get(component_def.0)
                                                 .unwrap();
-                                            tracing::info!("Component to report: {:?}", component);
+
+                                            // Try to find metric list for this component.
+                                            let metric_names =
+                                                match config.health_metrics.get(component_def.0) {
+                                                    Some(h) => h.metrics.clone(),
+                                                    None => Vec::new(),
+                                                };
+
+                                            // Сombined JSON log.
+                                            let log_obj = json!({
+                                                "timestamp": shifted_date.to_rfc3339(),
+                                                "status": last.value,
+                                                "service": component_def.0,
+                                                "environment": env.name,
+                                                "configured_metrics": metric_names,
+                                                "triggered_metrics": last.triggered,
+                                                "component": {
+                                                    "name": component.name,
+                                                    "attributes": component.attributes,
+                                                }
+                                            });
+
+                                            tracing::info!("{}", log_obj.to_string());
 
                                             // Search for component ID in the cache using name and attributes.
                                             let mut search_attrs = component.attributes.clone();
@@ -378,7 +400,7 @@ async fn metric_watcher(config: &Config) {
                                                         .to_string(),
                                                     description: "System-wide incident affecting multiple components. Created automatically."
                                                         .to_string(),
-                                                    impact: last.1,
+                                                    impact: last.value,
                                                     components: vec![id],
                                                     start_date: shifted_date,
                                                     system: true,
