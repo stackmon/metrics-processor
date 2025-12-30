@@ -148,7 +148,7 @@ pub async fn get_service_health(
                 }
             }
         }
-        // Determine which metrics were true at this timestamp.
+        // Determine which metrics were true at this timestamp
         let mut triggered: Vec<String> = Vec::new();
         for (mname, present) in ts_val.iter() {
             if *present {
@@ -160,6 +160,7 @@ pub async fn get_service_health(
             ts: *ts,
             value: expression_res,
             triggered,
+            metric_value: None,
         });
     }
 

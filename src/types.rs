@@ -116,9 +116,11 @@ pub struct ServiceHealthPoint {
     pub value: u8,
     #[serde(default)]
     pub triggered: Vec<String>,
+    #[serde(default)]
+    pub metric_value: Option<f64>,
 }
 
-/// List of the service health datapoints.
+/// List of the service health datapoints
 pub type ServiceHealthData = Vec<ServiceHealthPoint>;
 
 pub enum CloudMonError {

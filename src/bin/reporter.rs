@@ -295,9 +295,8 @@ async fn metric_watcher(config: &Config) {
                             match rsp.json::<ServiceHealthResponse>().await {
                                 Ok(mut data) => {
                                     tracing::debug!("response {:?}", data);
-                                    // Peek at last metric in the vector.
+                                    // Peek at last metric in the vector
                                     if let Some(last) = data.metrics.pop() {
-                                        // Is metric showing issues?
                                         if last.value > 0 {
                                             // 0 means OK
                                             let shifted_date = Utc
@@ -329,6 +328,7 @@ async fn metric_watcher(config: &Config) {
                                                 "environment": env.name,
                                                 "configured_metrics": metric_names,
                                                 "triggered_metrics": last.triggered,
+                                                "metric_value": last.metric_value,
                                                 "component": {
                                                     "name": component.name,
                                                     "attributes": component.attributes,
@@ -337,7 +337,7 @@ async fn metric_watcher(config: &Config) {
 
                                             tracing::info!("{}", log_obj.to_string());
 
-                                            // Search for component ID in the cache using name and attributes.
+                                            // Search for component ID in the cache using name and attributes
                                             let mut search_attrs = component.attributes.clone();
                                             search_attrs.sort();
                                             let mut required_attrs = component.attributes.clone();
@@ -364,7 +364,7 @@ async fn metric_watcher(config: &Config) {
                                             // First attemption to find Component
                                             let mut component_id = find_id(&component_id_cache);
 
-                                            // If component not found, refresh cache and try again.
+                                            // If component not found, refresh cache and try again
                                             if component_id.is_none() {
                                                 tracing::info!(
                                                     "Component '{}' with attributes {:?} not found in cache. Attempting to refresh.",
