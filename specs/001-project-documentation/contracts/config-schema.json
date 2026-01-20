@@ -1,0 +1,217 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cloudmon.eco.tsi-dev.otc-service.com/schemas/config-schema.json",
+  "title": "CloudMon Metrics Processor Configuration",
+  "description": "Complete configuration schema for metrics-processor including datasource, server, metric templates, and health metrics",
+  "type": "object",
+  "required": ["datasource", "server", "flag_metrics", "health_metrics"],
+  "properties": {
+    "datasource": {
+      "type": "object",
+      "description": "Time-series database (TSDB) connection configuration",
+      "required": ["url", "type"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "TSDB base URL (e.g., https://graphite.example.com)",
+          "examples": ["https://graphite.example.com"]
+        },
+        "type": {
+          "type": "string",
+          "enum": ["graphite"],
+          "description": "TSDB backend type (currently only Graphite supported)"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "default": 30,
+          "description": "Request timeout in seconds"
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "description": "HTTP API server configuration",
+      "required": ["address", "port"],
+      "properties": {
+        "address": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "IP address to bind to",
+          "examples": ["0.0.0.0", "127.0.0.1"]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Port number for HTTP server",
+          "examples": [3005, 8080]
+        }
+      }
+    },
+    "metric_templates": {
+      "type": "object",
+      "description": "Reusable query templates for TSDB metrics",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["query", "op", "threshold"],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "TSDB query with variable substitution ($service, $environment)",
+            "examples": ["stats.counters.api.$environment.$service.*.*.count"]
+          },
+          "op": {
+            "type": "string",
+            "enum": ["lt", "gt", "eq"],
+            "description": "Comparison operator: lt (less than), gt (greater than), eq (equals)"
+          },
+          "threshold": {
+            "type": "number",
+            "description": "Threshold value for comparison"
+          }
+        }
+      }
+    },
+    "environments": {
+      "type": "array",
+      "description": "Monitoring environments (e.g., production, staging)",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$",
+            "description": "Environment name (lowercase with dashes)"
+          },
+          "attributes": {
+            "type": "object",
+            "description": "Optional attributes for status dashboard integration",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "status_dashboard": {
+      "type": "object",
+      "description": "Status dashboard integration configuration",
+      "required": ["url", "secret"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Status dashboard base URL"
+        },
+        "secret": {
+          "type": "string",
+          "description": "JWT signing secret for authentication"
+        }
+      }
+    },
+    "flag_metrics": {
+      "type": "array",
+      "description": "Individual flag metrics that evaluate to raised (true) or lowered (false)",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "service", "template", "environments"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z_]+$",
+            "description": "Metric name (lowercase with underscores)"
+          },
+          "service": {
+            "type": "string",
+            "pattern": "^[a-z_]+$",
+            "description": "Service identifier this metric belongs to"
+          },
+          "template": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Reference to metric_template name"
+              }
+            }
+          },
+          "environments": {
+            "type": "array",
+            "description": "Environments this metric applies to",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Environment name matching environments array"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "health_metrics": {
+      "type": "object",
+      "description": "Health metrics combining flag metrics into service health status",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["service", "component_name", "category", "metrics", "expressions"],
+        "properties": {
+          "service": {
+            "type": "string",
+            "description": "Service identifier (must match flag_metrics service values)"
+          },
+          "component_name": {
+            "type": "string",
+            "description": "Human-readable component name"
+          },
+          "category": {
+            "type": "string",
+            "description": "Service category (e.g., compute, storage, network)"
+          },
+          "metrics": {
+            "type": "array",
+            "description": "Flag metrics referenced in expressions (service.metric_name format)",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z_]+\\.[a-z_]+$",
+              "examples": ["api.slow", "api.down"]
+            }
+          },
+          "expressions": {
+            "type": "array",
+            "description": "Boolean expressions with weights determining health status",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["expression", "weight"],
+              "properties": {
+                "expression": {
+                  "type": "string",
+                  "description": "Boolean expression using flag metric references (supports &&, ||, !)",
+                  "examples": ["api.slow || api.success_rate_low", "api.down"]
+                },
+                "weight": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 2,
+                  "description": "Health weight: 0=healthy, 1=degraded, 2=outage"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

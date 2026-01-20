@@ -1,0 +1,190 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cloudmon.eco.tsi-dev.otc-service.com/schemas/patterns.json",
+  "title": "CloudMon Metrics Processor Code Patterns and Conventions",
+  "description": "Patterns and conventions for AI-powered code generation and analysis",
+  "version": "0.2.0",
+  "patterns": [
+    {
+      "id": "metric_template_variable_substitution",
+      "name": "Metric Template Variable Substitution",
+      "context": "Templates use $variable syntax for dynamic query generation",
+      "syntax": "$service, $environment (case-sensitive)",
+      "available_variables": ["service", "environment"],
+      "example": "stats.counters.api.$environment.$service.*.*.count",
+      "implementation": "src/types.rs:172",
+      "notes": "Variable names must match exactly; no other variables supported"
+    },
+    {
+      "id": "binary_metric_configuration",
+      "name": "Binary Metric Configuration Pattern",
+      "description": "Flag and health metrics must specify comparison operator and threshold",
+      "operators": [
+        {
+          "name": "lt",
+          "description": "Less than - metric value < threshold triggers flag"
+        },
+        {
+          "name": "gt",
+          "description": "Greater than - metric value > threshold triggers flag"
+        },
+        {
+          "name": "eq",
+          "description": "Equals - metric value == threshold triggers flag"
+        }
+      ],
+      "reference": "src/types.rs:BinaryMetricRawDef",
+      "example": {
+        "query": "aggregate(stats.counters.api.*.mean)",
+        "op": "gt",
+        "threshold": 1000
+      }
+    },
+    {
+      "id": "health_expression_evaluation",
+      "name": "Health Expression Boolean Logic",
+      "description": "Health metrics use boolean expressions combining flag metrics",
+      "syntax": "service.metric_name with operators: &&, ||, !",
+      "expression_format": "flag_reference [operator flag_reference ...]",
+      "available_operators": {
+        "||": "Logical OR - any flag raised triggers expression",
+        "&&": "Logical AND - all flags must be raised",
+        "!": "Logical NOT - inverts flag state"
+      },
+      "examples": [
+        {
+          "expression": "api.slow || api.success_rate_low",
+          "description": "Triggers if either API is slow OR success rate is low"
+        },
+        {
+          "expression": "api.down",
+          "description": "Triggers only if API is completely down"
+        },
+        {
+          "expression": "!api.healthy && api.degraded",
+          "description": "Triggers if API is not healthy AND is degraded"
+        }
+      ],
+      "implementation": "Uses evalexpr crate for expression evaluation",
+      "reference": "src/types.rs:HealthMetric"
+    },
+    {
+      "id": "service_environment_naming",
+      "name": "Service and Environment Naming Convention",
+      "services": {
+        "format": "lowercase_with_underscores",
+        "pattern": "^[a-z_]+$",
+        "examples": ["api", "compute", "block_storage"]
+      },
+      "environments": {
+        "format": "lowercase-with-dashes",
+        "pattern": "^[a-z0-9-]+$",
+        "examples": ["production", "eu-de", "us-west-2"]
+      },
+      "rationale": "Consistent naming enables predictable query construction"
+    },
+    {
+      "id": "error_handling_pattern",
+      "name": "Error Handling Convention",
+      "approach": "Custom error types with context",
+      "common_errors": [
+        {
+          "error": "ServiceNotSupported",
+          "cause": "Service requested not defined in health_metrics configuration",
+          "resolution": "Add service to health_metrics section or check spelling"
+        },
+        {
+          "error": "EnvNotSupported",
+          "cause": "Environment requested not defined in environments configuration",
+          "resolution": "Add environment to environments array or check spelling"
+        },
+        {
+          "error": "InvalidExpression",
+          "cause": "Health metric expression contains syntax error",
+          "resolution": "Check expression syntax: use &&, ||, ! operators and service.metric format"
+        },
+        {
+          "error": "MetricNotFound",
+          "cause": "Flag metric referenced in health expression not defined",
+          "resolution": "Ensure flag metric exists in flag_metrics array"
+        }
+      ],
+      "implementation": "Custom error enums, avoid unwrap() in production code",
+      "reference": ".specify/memory/constitution.md:Principle I.4"
+    },
+    {
+      "id": "async_patterns",
+      "name": "Async/Await Usage Pattern",
+      "description": "All I/O operations use async with tokio runtime",
+      "rules": [
+        "HTTP requests to TSDB: use reqwest with async",
+        "API handlers: use axum async handlers",
+        "Never block tokio runtime with sync I/O",
+        "Use tokio::spawn for concurrent operations"
+      ],
+      "example_handler": "async fn get_health(Query(params): Query<HealthQuery>) -> Result<Json<ServiceData>, StatusCode>",
+      "reference": "src/api/v1.rs"
+    },
+    {
+      "id": "configuration_validation",
+      "name": "Configuration Validation Pattern",
+      "approach": "Validate configuration at startup before server starts",
+      "validation_rules": [
+        "All flag_metric templates must exist in metric_templates",
+        "All flag_metric environments must exist in environments array",
+        "All health_metric expressions must reference existing flag metrics",
+        "Service names in flag_metrics must match health_metrics keys"
+      ],
+      "implementation": "config::validate() function called during initialization",
+      "reference": "src/config.rs"
+    },
+    {
+      "id": "logging_conventions",
+      "name": "Structured Logging Pattern",
+      "framework": "tracing crate with tower-http middleware",
+      "levels": {
+        "ERROR": "Actionable issues requiring operator intervention",
+        "WARN": "Degraded operation or unexpected but handled conditions",
+        "INFO": "Significant state changes (server startup, config reload)",
+        "DEBUG": "Detailed diagnostics for troubleshooting"
+      },
+      "required_context": [
+        "request_id: included via tower-http middleware",
+        "service: for metric-specific logs",
+        "environment: for environment-specific logs"
+      ],
+      "example": "tracing::info!(request_id = %request_id, service = %service, \"Processing health query\");",
+      "reference": ".specify/memory/constitution.md:Principle III.3"
+    }
+  ],
+  "conventions": {
+    "file_naming": {
+      "rust_modules": "lowercase_snake_case.rs",
+      "documentation": "kebab-case.md",
+      "configuration": "kebab-case.yaml"
+    },
+    "data_structures": {
+      "config_structs": "Use serde derive for serialization/deserialization",
+      "api_types": "Derive JsonSchema for OpenAPI generation",
+      "internal_types": "Prefer owned types over lifetimes for simplicity"
+    },
+    "testing": {
+      "unit_tests": "#[cfg(test)] modules within implementation files",
+      "integration_tests": "tests/ directory for HTTP endpoint testing",
+      "mocking": "Use mockito for TSDB backend mocking"
+    }
+  },
+  "architectural_principles": {
+    "separation_of_concerns": [
+      "lib.rs: Common types and utilities",
+      "api.rs: HTTP API handlers",
+      "config.rs: Configuration parsing and validation",
+      "graphite.rs: TSDB backend implementation",
+      "types.rs: Domain data structures"
+    ],
+    "binary_responsibilities": {
+      "convertor": "Evaluates metrics and provides HTTP API for queries",
+      "reporter": "Polls convertor and sends updates to status dashboard"
+    }
+  }
+}

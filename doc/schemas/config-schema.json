@@ -1,0 +1,300 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Config",
+  "description": "Configuration structure",
+  "type": "object",
+  "required": [
+    "datasource",
+    "environments",
+    "flag_metrics",
+    "health_metrics",
+    "server"
+  ],
+  "properties": {
+    "datasource": {
+      "description": "TSDB datasource connection",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Datasource"
+        }
+      ]
+    },
+    "environments": {
+      "description": "Environment definitions",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/EnvironmentDef"
+      }
+    },
+    "flag_metrics": {
+      "description": "Flag metric definitions",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/FlagMetricDef"
+      }
+    },
+    "health_metrics": {
+      "description": "Health metric definitions per service",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/ServiceHealthDef"
+      }
+    },
+    "metric_templates": {
+      "description": "Metric query templates",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "$ref": "#/definitions/BinaryMetricRawDef"
+      }
+    },
+    "server": {
+      "description": "HTTP server binding configuration",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ServerConf"
+        }
+      ]
+    },
+    "status_dashboard": {
+      "description": "Status dashboard connection (optional)",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/StatusDashboardConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "BinaryMetricRawDef": {
+      "description": "Binary metric raw definition (template)",
+      "type": "object",
+      "required": [
+        "op",
+        "query",
+        "threshold"
+      ],
+      "properties": {
+        "op": {
+          "description": "Comparison operator (lt, gt, eq)",
+          "type": "string"
+        },
+        "query": {
+          "description": "TSDB query template with variable substitution",
+          "type": "string"
+        },
+        "threshold": {
+          "description": "Threshold value for comparison",
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "Datasource": {
+      "description": "TSDB Datasource connection",
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "timeout": {
+          "description": "Query timeout in seconds (default: 10)",
+          "default": 10,
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "url": {
+          "description": "TSDB URL (e.g., http://localhost:8080)",
+          "type": "string"
+        }
+      }
+    },
+    "EnvironmentDef": {
+      "description": "Environment definition",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "description": "Environment name (e.g., production, staging)",
+          "type": "string"
+        }
+      }
+    },
+    "EnvironmentOverride": {
+      "description": "Environment-specific override",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "description": "Environment name",
+          "type": "string"
+        },
+        "threshold": {
+          "description": "Overridden threshold (optional)",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "ExpressionDef": {
+      "description": "Health expression definition",
+      "type": "object",
+      "required": [
+        "expression",
+        "weight"
+      ],
+      "properties": {
+        "expression": {
+          "description": "Boolean expression (e.g., \"api_slow || api_error_rate_high\")",
+          "type": "string"
+        },
+        "weight": {
+          "description": "Weight: 0=healthy, 1=degraded, 2=outage",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0.0
+        }
+      }
+    },
+    "FlagMetricDef": {
+      "description": "Flag metric definition",
+      "type": "object",
+      "required": [
+        "environments",
+        "name",
+        "service",
+        "template"
+      ],
+      "properties": {
+        "environments": {
+          "description": "Environment-specific overrides",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/EnvironmentOverride"
+          }
+        },
+        "name": {
+          "description": "Metric name",
+          "type": "string"
+        },
+        "service": {
+          "description": "Service name",
+          "type": "string"
+        },
+        "template": {
+          "description": "Template reference",
+          "allOf": [
+            {
+              "$ref": "#/definitions/TemplateDef"
+            }
+          ]
+        }
+      }
+    },
+    "ServerConf": {
+      "description": "Server binding configuration",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "IP address to bind to (default: 0.0.0.0)",
+          "default": "0.0.0.0",
+          "type": "string"
+        },
+        "port": {
+          "description": "Port to bind to (default: 3000)",
+          "default": 3000,
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ServiceHealthDef": {
+      "description": "Service health definition",
+      "type": "object",
+      "required": [
+        "category",
+        "expressions",
+        "metrics",
+        "service"
+      ],
+      "properties": {
+        "category": {
+          "description": "Category (e.g., compute, network, storage)",
+          "type": "string"
+        },
+        "component_name": {
+          "description": "Component display name",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expressions": {
+          "description": "Boolean expressions with weights",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExpressionDef"
+          }
+        },
+        "metrics": {
+          "description": "List of flag metric names to evaluate",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "service": {
+          "description": "Service name",
+          "type": "string"
+        }
+      }
+    },
+    "StatusDashboardConfig": {
+      "description": "Status Dashboard configuration",
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "secret": {
+          "description": "JWT token signature secret (optional)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "Status dashboard URL",
+          "type": "string"
+        }
+      }
+    },
+    "TemplateDef": {
+      "description": "Template reference",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "description": "Template name (references metric_templates key)",
+          "type": "string"
+        }
+      }
+    }
+  }
+}
