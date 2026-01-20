@@ -207,7 +207,7 @@ impl AppState {
         let timeout = Duration::from_secs(config.datasource.timeout as u64);
 
         Self {
-            config: config,
+            config,
             metric_templates: HashMap::new(),
             flag_metrics: HashMap::new(),
             req_client: ClientBuilder::new().timeout(timeout).build().unwrap(),
@@ -231,19 +231,17 @@ impl AppState {
                 let tmpl = self.metric_templates.get(&tmpl_ref.name).unwrap();
                 let tmpl_query = Template::new(tmpl.query.clone()).with_regex(&custom_regex);
                 for env in metric_def.environments.iter() {
-                    let mut raw = FlagMetric::default();
-                    raw.op = tmpl.op.clone();
-                    raw.threshold = match env.threshold {
-                        Some(x) => x,
-                        None => tmpl.threshold.clone(),
-                    };
                     let vars: HashMap<&str, &str> = HashMap::from([
                         ("service", metric_def.service.as_str()),
                         ("environment", env.name.as_str()),
                     ]);
-                    raw.query = tmpl_query.render(&vars).unwrap();
+                    let raw = FlagMetric {
+                        op: tmpl.op.clone(),
+                        threshold: env.threshold.unwrap_or(tmpl.threshold),
+                        query: tmpl_query.render(&vars).unwrap(),
+                    };
                     if let Some(x) = self.flag_metrics.get_mut(&metric_name) {
-                        x.insert(env.name.clone(), raw.clone());
+                        x.insert(env.name.clone(), raw);
                     } else {
                         tracing::error!("Metric processing failed");
                     }
@@ -276,7 +274,7 @@ impl AppState {
                     expression = expression.replace(k, v);
                 }
                 int_metric.expressions.push(MetricExpressionDef {
-                    expression: expression,
+                    expression,
                     weight: expr.weight,
                 });
             }

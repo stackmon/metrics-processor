@@ -31,6 +31,19 @@ pub struct GraphiteData {
     pub datapoints: Vec<(Option<f32>, u32)>,
 }
 
+/// Time range parameters for Graphite queries
+#[derive(Debug, Default)]
+pub struct GraphiteTimeRange {
+    /// Parsed 'from' datetime
+    pub from: Option<DateTime<FixedOffset>>,
+    /// Raw 'from' string (e.g., "-5min")
+    pub from_raw: Option<String>,
+    /// Parsed 'to' datetime
+    pub to: Option<DateTime<FixedOffset>>,
+    /// Raw 'to' string (e.g., "-2min")
+    pub to_raw: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MetricsQuery {
     pub query: String,
@@ -92,14 +105,14 @@ where
 }
 
 pub fn get_graphite_routes() -> Router<AppState> {
-    return Router::new()
+    Router::new()
         .route("/functions", get(handler_functions))
         .route(
             "/metrics/find",
             get(handler_metrics_find_get).post(handler_metrics_find_post),
         )
         .route("/render", get(handler_render).post(handler_render))
-        .route("/tags/autoComplete/tags", get(handler_tags));
+        .route("/tags/autoComplete/tags", get(handler_tags))
 }
 
 /// Handler for graphite list supported functions API
@@ -206,7 +219,7 @@ pub fn find_metrics(find_request: MetricsQuery, state: AppState) -> Vec<Metric> 
         }
         tracing::debug!("Elements {:?}", target_parts);
     }
-    return metrics;
+    metrics
 }
 
 /// POST Handler for graphite find metrics API
@@ -217,13 +230,13 @@ pub async fn handler_metrics_find_post(
 ) -> impl IntoResponse {
     tracing::debug!("Processing find query={:?}", query);
     let metrics: Vec<Metric> = find_metrics(query, state);
-    return (
+    (
         StatusCode::OK,
         Json(json!(metrics
             .into_iter()
             .sorted_by(|a, b| Ord::cmp(&a.text, &b.text))
             .collect::<Vec<Metric>>())),
-    );
+    )
 }
 
 /// GET Handler for graphite find metrics API
@@ -234,13 +247,13 @@ pub async fn handler_metrics_find_get(
 ) -> impl IntoResponse {
     tracing::debug!("Processing find query={:?}", query);
     let metrics: Vec<Metric> = find_metrics(query, state);
-    return (
+    (
         StatusCode::OK,
         Json(json!(metrics
             .into_iter()
             .sorted_by(|a, b| Ord::cmp(&a.text, &b.text))
             .collect::<Vec<Metric>>())),
-    );
+    )
 }
 
 /// Handler for graphite render API
@@ -286,23 +299,23 @@ pub async fn handler_render(
                         }
                     }
                 } else if let Some(metric) = state.flag_metrics.get(&metric_name) {
-                    match metric.get(environment) {
-                        Some(m) => {
-                            graphite_targets.insert(metric_name.clone(), m.query.clone());
-                        }
-                        _ => {}
+                    if let Some(m) = metric.get(environment) {
+                        graphite_targets.insert(metric_name.clone(), m.query.clone());
                     };
                 }
                 tracing::debug!("Requesting Graphite {:?}", graphite_targets);
 
+                let time_range = GraphiteTimeRange {
+                    from: None,
+                    from_raw: from,
+                    to: None,
+                    to_raw: to,
+                };
                 match get_graphite_data(
                     &state.req_client,
-                    &state.config.datasource.url.as_str(),
+                    state.config.datasource.url.as_str(),
                     &graphite_targets,
-                    None,
-                    from,
-                    None,
-                    to,
+                    &time_range,
                     max_data_points,
                 )
                 .await
@@ -390,10 +403,7 @@ pub async fn get_graphite_data(
     client: &reqwest::Client,
     url: &str,
     targets: &HashMap<String, String>,
-    from: Option<DateTime<FixedOffset>>,
-    from_raw: Option<String>,
-    to: Option<DateTime<FixedOffset>>,
-    to_raw: Option<String>,
+    time_range: &GraphiteTimeRange,
     max_data_points: u16,
 ) -> Result<Vec<GraphiteData>, CloudMonError> {
     // Prepare vector of query parameters
@@ -403,14 +413,14 @@ pub async fn get_graphite_data(
         ("maxDataPoints", max_data_points.to_string()),
     ]
     .into();
-    if let Some(xfrom) = from {
+    if let Some(xfrom) = time_range.from {
         query_params.push(("from", xfrom.format("%H:%M_%Y%m%d").to_string()));
-    } else if let Some(xfrom) = from_raw {
+    } else if let Some(ref xfrom) = time_range.from_raw {
         query_params.push(("from", xfrom.clone()));
     }
-    if let Some(xto) = to {
+    if let Some(xto) = time_range.to {
         query_params.push(("until", xto.format("%H:%M_%Y%m%d").to_string()));
-    } else if let Some(xto) = to_raw {
+    } else if let Some(ref xto) = time_range.to_raw {
         query_params.push(("until", xto.clone()));
     }
     query_params.extend(
@@ -428,18 +438,18 @@ pub async fn get_graphite_data(
         Ok(rsp) => {
             if rsp.status().is_client_error() {
                 tracing::error!("Error: {:?}", rsp.text().await);
-                return Err(CloudMonError::GraphiteError);
+                Err(CloudMonError::GraphiteError)
             } else {
                 tracing::trace!("Status: {}", rsp.status());
                 tracing::trace!("Headers:\n{:#?}", rsp.headers());
                 match rsp.json().await {
-                    Ok(dt) => return Ok(dt),
-                    Err(_) => return Err(CloudMonError::GraphiteError),
+                    Ok(dt) => Ok(dt),
+                    Err(_) => Err(CloudMonError::GraphiteError),
                 }
             }
         }
-        Err(_) => return Err(CloudMonError::GraphiteError),
-    };
+        Err(_) => Err(CloudMonError::GraphiteError),
+    }
 }
 ///
 /// Handler for graphite tags API
@@ -501,14 +511,17 @@ mod test {
         let to: Option<DateTime<FixedOffset>> =
             DateTime::parse_from_rfc3339("2022-02-01T00:00:00+00:00").ok();
         let max_data_points: u16 = 15;
+        let time_range = graphite::GraphiteTimeRange {
+            from,
+            from_raw: None,
+            to,
+            to_raw: None,
+        };
         let _res = aw!(graphite::get_graphite_data(
             &_req_client,
             format!("{}", server.url()).as_str(),
             &targets,
-            from,
-            None,
-            to,
-            None,
+            &time_range,
             max_data_points,
         ));
         mock.assert();
