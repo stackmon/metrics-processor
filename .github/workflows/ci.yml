@@ -13,7 +13,7 @@ env:
 
 jobs:
   clippy:
-    name: Clippy
+    name: Clippy linter
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   fmt:
-    name: Rustfmt
+    name: Check Rust Formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
