@@ -173,6 +173,62 @@ pub struct StatusDashboardConfig {
     pub url: String,
     /// JWT token signature secret
     pub secret: Option<String>,
+    /// Polling interval in seconds (default: 60)
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval: u64,
+    /// Number of retry attempts for fetching components (default: 3)
+    #[serde(default = "default_retry_count")]
+    pub retry_count: u32,
+    /// Delay between retries in seconds (default: 60)
+    #[serde(default = "default_retry_delay")]
+    pub retry_delay: u64,
+    /// HTTP request timeout in seconds (default: 10)
+    #[serde(default = "default_sdb_timeout")]
+    pub timeout: u64,
+    /// Query time range start (default: "-5min")
+    #[serde(default = "default_query_from")]
+    pub query_from: String,
+    /// Query time range end (default: "-2min")
+    #[serde(default = "default_query_to")]
+    pub query_to: String,
+    /// Incident title template (default: "System incident from monitoring system")
+    #[serde(default = "default_incident_title")]
+    pub incident_title: String,
+    /// Incident description template (default: "System-wide incident affecting multiple components. Created automatically.")
+    #[serde(default = "default_incident_description")]
+    pub incident_description: String,
+}
+
+fn default_poll_interval() -> u64 {
+    60
+}
+
+fn default_retry_count() -> u32 {
+    3
+}
+
+fn default_retry_delay() -> u64 {
+    60
+}
+
+fn default_sdb_timeout() -> u64 {
+    10
+}
+
+fn default_query_from() -> String {
+    "-5min".to_string()
+}
+
+fn default_query_to() -> String {
+    "-2min".to_string()
+}
+
+fn default_incident_title() -> String {
+    "System incident from monitoring system".to_string()
+}
+
+fn default_incident_description() -> String {
+    "System-wide incident affecting multiple components. Created automatically.".to_string()
 }
 
 #[cfg(test)]

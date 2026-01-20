@@ -2,6 +2,7 @@
 //!
 //! Internal types definitions
 use crate::config::Config;
+use chrono::{DateTime, Utc};
 use new_string_template::template::Template;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,44 @@ use std::fmt;
 use std::time::Duration;
 
 use reqwest::ClientBuilder;
+
+/// Component attribute for Status Dashboard
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct ComponentAttribute {
+    pub name: String,
+    pub value: String,
+}
+
+/// Component definition with name and attributes
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct Component {
+    pub name: String,
+    pub attributes: Vec<ComponentAttribute>,
+}
+
+/// Structure for deserializing components from Status Dashboard API v2 (/v2/components).
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct StatusDashboardComponent {
+    pub id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub attributes: Vec<ComponentAttribute>,
+}
+
+/// Structure for serializing incident data for Status Dashboard API v2 (/v2/incidents).
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct IncidentData {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub impact: u8,
+    pub components: Vec<u32>,
+    pub start_date: DateTime<Utc>,
+    #[serde(default)]
+    pub system: bool,
+    #[serde(rename = "type")]
+    pub incident_type: String,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
