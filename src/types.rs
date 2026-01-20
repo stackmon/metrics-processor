@@ -2,6 +2,7 @@
 //!
 //! Internal types definitions
 use crate::config::Config;
+use chrono::{DateTime, Utc};
 use new_string_template::template::Template;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,44 @@ use std::fmt;
 use std::time::Duration;
 
 use reqwest::ClientBuilder;
+
+/// Component attribute for Status Dashboard
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct ComponentAttribute {
+    pub name: String,
+    pub value: String,
+}
+
+/// Component definition with name and attributes
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct Component {
+    pub name: String,
+    pub attributes: Vec<ComponentAttribute>,
+}
+
+/// Structure for deserializing components from Status Dashboard API v2 (/v2/components).
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct StatusDashboardComponent {
+    pub id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub attributes: Vec<ComponentAttribute>,
+}
+
+/// Structure for serializing incident data for Status Dashboard API v2 (/v2/incidents).
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct IncidentData {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub impact: u8,
+    pub components: Vec<u32>,
+    pub start_date: DateTime<Utc>,
+    #[serde(default)]
+    pub system: bool,
+    #[serde(rename = "type")]
+    pub incident_type: String,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -168,7 +207,7 @@ impl AppState {
         let timeout = Duration::from_secs(config.datasource.timeout as u64);
 
         Self {
-            config: config,
+            config,
             metric_templates: HashMap::new(),
             flag_metrics: HashMap::new(),
             req_client: ClientBuilder::new().timeout(timeout).build().unwrap(),
@@ -192,19 +231,17 @@ impl AppState {
                 let tmpl = self.metric_templates.get(&tmpl_ref.name).unwrap();
                 let tmpl_query = Template::new(tmpl.query.clone()).with_regex(&custom_regex);
                 for env in metric_def.environments.iter() {
-                    let mut raw = FlagMetric::default();
-                    raw.op = tmpl.op.clone();
-                    raw.threshold = match env.threshold {
-                        Some(x) => x,
-                        None => tmpl.threshold.clone(),
-                    };
                     let vars: HashMap<&str, &str> = HashMap::from([
                         ("service", metric_def.service.as_str()),
                         ("environment", env.name.as_str()),
                     ]);
-                    raw.query = tmpl_query.render(&vars).unwrap();
+                    let raw = FlagMetric {
+                        op: tmpl.op.clone(),
+                        threshold: env.threshold.unwrap_or(tmpl.threshold),
+                        query: tmpl_query.render(&vars).unwrap(),
+                    };
                     if let Some(x) = self.flag_metrics.get_mut(&metric_name) {
-                        x.insert(env.name.clone(), raw.clone());
+                        x.insert(env.name.clone(), raw);
                     } else {
                         tracing::error!("Metric processing failed");
                     }
@@ -237,7 +274,7 @@ impl AppState {
                     expression = expression.replace(k, v);
                 }
                 int_metric.expressions.push(MetricExpressionDef {
-                    expression: expression,
+                    expression,
                     weight: expr.weight,
                 });
             }

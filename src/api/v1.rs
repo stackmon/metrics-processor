@@ -43,15 +43,15 @@ pub struct ServiceHealthResponse {
 
 /// Construct supported api v1 routes
 pub fn get_v1_routes() -> Router<AppState> {
-    return Router::new()
+    Router::new()
         .route("/", get(root))
         .route("/info", get(info))
-        .route("/health", get(handler_health));
+        .route("/health", get(handler_health))
 }
 
 /// Return API v1 root info
 async fn root() -> impl IntoResponse {
-    return (StatusCode::OK, Json(json!({"name": "v1"})));
+    (StatusCode::OK, Json(json!({"name": "v1"})))
 }
 
 /// Return v1 API infos

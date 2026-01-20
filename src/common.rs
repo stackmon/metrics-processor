@@ -12,14 +12,14 @@ use crate::graphite;
 /// Get Flag value for the metric
 pub fn get_metric_flag_state(value: &Option<f32>, metric: &FlagMetric) -> bool {
     // Convert raw value to flag
-    return match *value {
+    match *value {
         Some(x) => match metric.op {
             CmpType::Lt => x < metric.threshold,
             CmpType::Gt => x > metric.threshold,
             CmpType::Eq => x == metric.threshold,
         },
         None => false,
-    };
+    }
 }
 /// Get Service Health as described by config
 pub async fn get_service_health(
@@ -34,7 +34,7 @@ pub async fn get_service_health(
         return Err(CloudMonError::ServiceNotSupported);
     }
     let hm_config = state.health_metrics.get(service).unwrap();
-    let metric_names: Vec<String> = Vec::from(hm_config.metrics.clone());
+    let metric_names: Vec<String> = hm_config.metrics.clone();
 
     tracing::trace!("Requesting metrics {:?}", metric_names);
     let mut graphite_targets: HashMap<String, String> = HashMap::new();
@@ -57,14 +57,17 @@ pub async fn get_service_health(
         }
     }
     tracing::debug!("Requesting Graphite {:?}", graphite_targets);
+    let time_range = graphite::GraphiteTimeRange {
+        from: DateTime::parse_from_rfc3339(from).ok(),
+        from_raw: Some(from.to_string()),
+        to: DateTime::parse_from_rfc3339(to).ok(),
+        to_raw: Some(to.to_string()),
+    };
     let raw_data: Vec<graphite::GraphiteData> = graphite::get_graphite_data(
         &state.req_client,
-        &state.config.datasource.url.as_str(),
+        state.config.datasource.url.as_str(),
         &graphite_targets,
-        DateTime::parse_from_rfc3339(from).ok(),
-        Some(from.to_string()),
-        DateTime::parse_from_rfc3339(to).ok(),
-        Some(to.to_string()),
+        &time_range,
         max_data_points,
     )
     .await
@@ -86,8 +89,8 @@ pub async fn get_service_health(
                 // Iterate over all fetched series
                 for (val, ts) in data_element.datapoints.iter() {
                     // Convert raw value to flag
-                    if let Some(_) = val {
-                        metrics_map.entry(*ts).or_insert(HashMap::new()).insert(
+                    if val.is_some() {
+                        metrics_map.entry(*ts).or_default().insert(
                             data_element.target.clone(),
                             get_metric_flag_state(val, metric),
                         );
@@ -115,7 +118,7 @@ pub async fn get_service_health(
                 _ => false,
             };
             context
-                .set_value(metric.replace("-", "_").into(), Value::from(xval))
+                .set_value(metric.replace("-", "_"), Value::from(xval))
                 .unwrap();
         }
         let mut expression_res: u8 = 0;
@@ -166,5 +169,5 @@ pub async fn get_service_health(
 
     tracing::debug!("Summary data: {:?}, length={}", result, result.len());
 
-    return Ok(result);
+    Ok(result)
 }
