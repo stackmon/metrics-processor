@@ -13,10 +13,10 @@ tests/
 ├── fixtures/                   # Shared test fixtures and utilities
 │   ├── mod.rs                 # Module declaration
 │   ├── configs.rs             # YAML configuration fixtures
-│   ├── graphite_responses.rs # Mock Graphite response data
+│   ├── graphite_responses.rs  # Mock Graphite response data
 │   └── helpers.rs             # Test helper functions and assertions
 ├── documentation_validation.rs # Documentation validation tests
-└── (future integration tests)
+└── integration_health.rs       # Service health integration tests
 
 src/
 ├── common.rs                  # + #[cfg(test)] mod tests { ... }
@@ -186,9 +186,10 @@ When breaking changes are introduced:
 - **Status**: ✅ Complete (100% coverage)
 
 ### Phase 2: Service Health Aggregation (US2)
-- **Tests**: (to be implemented)
-- **Coverage**: Expression evaluation, weight calculation
-- **Status**: 🚧 Pending
+- **Tests**: 11 tests (8 unit + 3 integration)
+- **Coverage**: Expression evaluation, weight calculation, OR/AND operators
+- **Edge Cases**: Unknown service/environment, empty datapoints, partial data
+- **Status**: ✅ Complete
 
 ### Phase 3: Configuration Processing (US4)
 - **Tests**: (to be implemented)
