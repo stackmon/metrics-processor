@@ -129,17 +129,17 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 ### Tests for User Story 4
 
-- [ ] T037 [P] [US4] Test template variable substitution ($environment, $service) in src/types.rs test module
-- [ ] T038 [P] [US4] Test multiple environments expansion creates correct mappings in src/types.rs test module
-- [ ] T039 [P] [US4] Test per-environment threshold override in src/types.rs test module
-- [ ] T040 [P] [US4] Test dash-to-underscore conversion in expressions in src/types.rs test module
-- [ ] T041 [P] [US4] Test service set population from config in src/types.rs test module
-- [ ] T042 [P] [US4] Test health metrics expression copying in src/types.rs test module
-- [ ] T043 [P] [US4] Test invalid YAML syntax returns parse error in src/config.rs test module
-- [ ] T044 [P] [US4] Test missing required fields validation in src/config.rs test module
-- [ ] T045 [P] [US4] Test default values applied correctly in src/config.rs test module
-- [ ] T046 [P] [US4] Test get_socket_addr produces valid address in src/config.rs test module
-- [ ] T047 [P] [US4] Test config loading from multiple sources (file, conf.d, env vars) in src/config.rs test module
+- [X] T037 [P] [US4] Test template variable substitution ($environment, $service) in src/types.rs test module
+- [X] T038 [P] [US4] Test multiple environments expansion creates correct mappings in src/types.rs test module
+- [X] T039 [P] [US4] Test per-environment threshold override in src/types.rs test module
+- [X] T040 [P] [US4] Test dash-to-underscore conversion in expressions in src/types.rs test module
+- [X] T041 [P] [US4] Test service set population from config in src/types.rs test module
+- [X] T042 [P] [US4] Test health metrics expression copying in src/types.rs test module
+- [X] T043 [P] [US4] Test invalid YAML syntax returns parse error in src/config.rs test module
+- [X] T044 [P] [US4] Test missing required fields validation in src/config.rs test module
+- [X] T045 [P] [US4] Test default values applied correctly in src/config.rs test module
+- [X] T046 [P] [US4] Test get_socket_addr produces valid address in src/config.rs test module
+- [X] T047 [P] [US4] Test config loading from multiple sources (file, conf.d, env vars) in src/config.rs test module
 
 **Checkpoint**: Configuration processing fully tested - can refactor config initialization safely
 
@@ -153,19 +153,19 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 ### Tests for User Story 3
 
-- [ ] T048 [P] [US3] Test /api/v1/ root endpoint returns name in src/api/v1.rs test module
-- [ ] T049 [P] [US3] Test /api/v1/info returns API info in src/api/v1.rs test module
+- [X] T048 [P] [US3] Test /api/v1/ root endpoint returns name in src/api/v1.rs test module
+- [X] T049 [P] [US3] Test /api/v1/info returns API info in src/api/v1.rs test module
 - [ ] T050 [P] [US3] Test /api/v1/health with valid service returns 200 + JSON in src/api/v1.rs test module
-- [ ] T051 [P] [US3] Test /api/v1/health with unknown service returns 409 in src/api/v1.rs test module
-- [ ] T052 [P] [US3] Test /api/v1/health with missing params returns 400 in src/api/v1.rs test module
+- [X] T051 [P] [US3] Test /api/v1/health with unknown service returns 409 in src/api/v1.rs test module
+- [X] T052 [P] [US3] Test /api/v1/health with missing params returns 400 in src/api/v1.rs test module
 - [ ] T053 [P] [US3] Test /render with flag target returns boolean datapoints in src/graphite.rs test module
 - [ ] T054 [P] [US3] Test /render with health target returns health scores in src/graphite.rs test module
-- [ ] T055 [P] [US3] Test /render with invalid target returns empty array in src/graphite.rs test module
+- [X] T055 [P] [US3] Test /render with invalid target returns empty array in src/graphite.rs test module
 - [ ] T056 [P] [US3] Test /metrics/find at all hierarchy levels in src/graphite.rs test module
-- [ ] T057 [P] [US3] Test /functions returns empty object in src/graphite.rs test module
-- [ ] T058 [P] [US3] Test /tags/autoComplete/tags returns empty array in src/graphite.rs test module
-- [ ] T059 [US3] Create full API integration test with mocked Graphite in tests/integration_api.rs
-- [ ] T060 [US3] Test error response format validation in tests/integration_api.rs
+- [X] T057 [P] [US3] Test /functions returns empty object in src/graphite.rs test module
+- [X] T058 [P] [US3] Test /tags/autoComplete/tags returns empty array in src/graphite.rs test module
+- [X] T059 [US3] Create full API integration test with mocked Graphite in tests/integration_api.rs
+- [X] T060 [US3] Test error response format validation in tests/integration_api.rs
 
 **Checkpoint**: All API endpoints tested - API contract protected during refactoring
 
@@ -179,15 +179,15 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 ### Tests for User Story 5
 
-- [ ] T061 [P] [US5] Test query building produces valid Graphite syntax in src/graphite.rs test module
-- [ ] T062 [P] [US5] Test valid JSON with datapoints parses correctly in src/graphite.rs test module
-- [ ] T063 [P] [US5] Test empty datapoints array handled gracefully in src/graphite.rs test module
+- [ ] T061 [P] [US5] Test query building produces valid Graphite syntax in src/graphite.rs test module (Covered by test_get_graphite_data)
+- [ ] T062 [P] [US5] Test valid JSON with datapoints parses correctly in src/graphite.rs test module (Covered by test_get_graphite_data)
+- [ ] T063 [P] [US5] Test empty datapoints array handled gracefully in src/graphite.rs test module (Covered by integration tests)
 - [ ] T064 [P] [US5] Test HTTP 4xx error returns GraphiteError in src/graphite.rs test module
 - [ ] T065 [P] [US5] Test HTTP 5xx error returns GraphiteError in src/graphite.rs test module
 - [ ] T066 [P] [US5] Test malformed JSON response handling in src/graphite.rs test module
 - [ ] T067 [P] [US5] Test connection timeout handling in src/graphite.rs test module
-- [ ] T068 [P] [US5] Test metric discovery with wildcards in src/graphite.rs test module
-- [ ] T069 [P] [US5] Test null and NaN values handled gracefully in src/graphite.rs test module
+- [ ] T068 [P] [US5] Test metric discovery with wildcards in src/graphite.rs test module (Covered by test_get_grafana_find)
+- [ ] T069 [P] [US5] Test null and NaN values handled gracefully in src/graphite.rs test module (Covered by common tests)
 - [ ] T070 [P] [US5] Test partial response handling (some metrics succeed, others fail) in src/graphite.rs test module
 
 **Checkpoint**: Graphite integration fully tested - can refactor TSDB client safely

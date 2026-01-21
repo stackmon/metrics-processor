@@ -283,6 +283,9 @@ mod test {
         env::set_var("MP_STATUS_DASHBOARD__SECRET", "val");
         let _config = config::Config::new(config_file.path().to_str().unwrap()).unwrap();
         assert_eq!(_config.status_dashboard.unwrap().secret.unwrap(), "val");
+        
+        // Clean up to avoid affecting other tests
+        env::remove_var("MP_STATUS_DASHBOARD__SECRET");
     }
 
     /// Test merging of the config with conf.d elements
@@ -309,6 +312,155 @@ mod test {
             assert_eq!("b", &flag.service);
         }
 
+        dir.close().unwrap();
+    }
+
+    /// T043: Test invalid YAML syntax returns parse error
+    #[test]
+    #[should_panic]
+    fn test_invalid_yaml_syntax() {
+        let invalid_yaml = "
+        datasource:
+          url: 'https://graphite.example.com'
+        server:
+          port: 3000
+          invalid syntax here [[[
+        ";
+        // This should panic because YAML is invalid
+        let _config = config::Config::from_config_str(invalid_yaml);
+    }
+
+    /// T044: Test missing required fields validation
+    #[test]
+    #[should_panic]
+    fn test_missing_required_fields() {
+        let missing_datasource = "
+        server:
+          port: 3000
+        environments:
+          - name: prod
+        flag_metrics: []
+        health_metrics: {}
+        ";
+        // This should panic because datasource is missing
+        let _config = config::Config::from_config_str(missing_datasource);
+    }
+
+    /// T045: Test default values applied correctly
+    #[test]
+    fn test_default_values() {
+        let minimal_config = "
+        datasource:
+          url: 'https://graphite.example.com'
+        server: {}
+        environments:
+          - name: prod
+        flag_metrics: []
+        health_metrics: {}
+        ";
+        let config = config::Config::from_config_str(minimal_config);
+        
+        // Verify default server address
+        assert_eq!("0.0.0.0", config.server.address);
+        
+        // Verify default server port
+        assert_eq!(3000, config.server.port);
+        
+        // Verify default datasource timeout
+        assert_eq!(10, config.datasource.timeout);
+    }
+
+    /// T046: Test get_socket_addr produces valid address
+    #[test]
+    fn test_get_socket_addr() {
+        let config_str = "
+        datasource:
+          url: 'https://graphite.example.com'
+        server:
+          address: '127.0.0.1'
+          port: 8080
+        environments:
+          - name: prod
+        flag_metrics: []
+        health_metrics: {}
+        ";
+        let config = config::Config::from_config_str(config_str);
+        
+        let socket_addr = config.get_socket_addr();
+        assert_eq!("127.0.0.1:8080", socket_addr.to_string());
+    }
+
+    /// T047: Test config loading from multiple sources (file, conf.d, env vars)
+    /// Note: This test is effectively covered by test_merge_parts and test_merge_env
+    /// but we add an explicit comprehensive test
+    #[test]
+    fn test_config_loading_from_multiple_sources() {
+        // Clear any lingering environment variables from other tests
+        env::remove_var("MP_STATUS_DASHBOARD__SECRET");
+        env::remove_var("MP_STATUS_DASHBOARD__URL");
+        env::remove_var("MP_DATASOURCE__TIMEOUT");
+        env::remove_var("MP_SERVER__PORT");
+        
+        // Create temporary directory structure
+        let dir = Builder::new().tempdir().unwrap();
+        let main_config_path = dir.path().join("config.yaml");
+        let mut main_config = File::create(&main_config_path).unwrap();
+        
+        // Create conf.d directory
+        let confd_path = dir.path().join("conf.d");
+        create_dir(&confd_path).expect("Cannot create conf.d");
+        
+        // Write main config with all required fields
+        let main_config_content = "
+        datasource:
+          url: 'https://graphite.example.com'
+          timeout: 10
+        server:
+          port: 3000
+          address: '0.0.0.0'
+        metric_templates:
+          tmpl1:
+            query: 'base_query'
+            op: lt
+            threshold: 10
+        environments:
+          - name: prod
+        health_metrics: {}
+        ";
+        main_config.write_all(main_config_content.as_bytes()).unwrap();
+        
+        // Write conf.d part
+        let flags_config_content = "
+        flag_metrics:
+          - name: test-metric
+            service: test-service
+            template:
+              name: tmpl1
+            environments:
+              - name: prod
+        ";
+        let mut flags_config = File::create(confd_path.join("flags.yaml")).unwrap();
+        flags_config.write_all(flags_config_content.as_bytes()).unwrap();
+        
+        // Set environment variable for server port (override main config)
+        env::set_var("MP_SERVER__PORT", "8080");
+        
+        // Load config from all sources
+        let config = config::Config::new(main_config_path.to_str().unwrap()).unwrap();
+        
+        // Verify main config loaded
+        assert_eq!("https://graphite.example.com", config.datasource.url);
+        assert_eq!(10, config.datasource.timeout);
+        
+        // Verify conf.d part merged
+        assert_eq!(1, config.flag_metrics.len());
+        assert_eq!("test-metric", config.flag_metrics[0].name);
+        
+        // Verify environment variable merged (overrides main config)
+        assert_eq!(8080, config.server.port);
+        
+        // Cleanup
+        env::remove_var("MP_SERVER__PORT");
         dir.close().unwrap();
     }
 }
