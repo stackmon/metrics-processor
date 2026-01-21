@@ -105,17 +105,17 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 ### Tests for User Story 2
 
-- [ ] T026 [P] [US2] Test single metric OR expression evaluates correctly in src/common.rs test module
-- [ ] T027 [P] [US2] Test two metrics AND expression (both true) in src/common.rs test module
-- [ ] T028 [P] [US2] Test two metrics AND expression (one false) returns false in src/common.rs test module
-- [ ] T029 [P] [US2] Test weighted expressions return highest matching weight in src/common.rs test module
-- [ ] T030 [P] [US2] Test all false expressions return weight 0 in src/common.rs test module
-- [ ] T031 [P] [US2] Test unknown service returns ServiceNotSupported error in src/common.rs test module
-- [ ] T032 [P] [US2] Test unknown environment returns EnvNotSupported error in src/common.rs test module
-- [ ] T033 [P] [US2] Test multiple datapoints across time series in src/common.rs test module
-- [ ] T034 [US2] Create end-to-end health calculation test with mocked Graphite in tests/integration_health.rs
-- [ ] T035 [US2] Test complex weighted expression scenarios in tests/integration_health.rs
-- [ ] T036 [US2] Test edge cases: empty datapoints and partial data in tests/integration_health.rs
+- [X] T026 [P] [US2] Test single metric OR expression evaluates correctly in src/common.rs test module
+- [X] T027 [P] [US2] Test two metrics AND expression (both true) in src/common.rs test module
+- [X] T028 [P] [US2] Test two metrics AND expression (one false) returns false in src/common.rs test module
+- [X] T029 [P] [US2] Test weighted expressions return highest matching weight in src/common.rs test module
+- [X] T030 [P] [US2] Test all false expressions return weight 0 in src/common.rs test module
+- [X] T031 [P] [US2] Test unknown service returns ServiceNotSupported error in src/common.rs test module
+- [X] T032 [P] [US2] Test unknown environment returns EnvNotSupported error in src/common.rs test module
+- [X] T033 [P] [US2] Test multiple datapoints across time series in src/common.rs test module
+- [X] T034 [US2] Create end-to-end health calculation test with mocked Graphite in tests/integration_health.rs
+- [X] T035 [US2] Test complex weighted expression scenarios in tests/integration_health.rs
+- [X] T036 [US2] Test edge cases: empty datapoints and partial data in tests/integration_health.rs
 
 **Checkpoint**: Service health aggregation fully tested - can refactor expression evaluation confidently
 
