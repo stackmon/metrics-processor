@@ -28,10 +28,10 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 **Purpose**: Test infrastructure and fixtures that all test phases depend on
 
-- [ ] T001 Create fixtures module structure in tests/fixtures/mod.rs
-- [ ] T002 [P] Create test configuration fixtures in tests/fixtures/configs.rs
-- [ ] T003 [P] Create Graphite response mock data in tests/fixtures/graphite_responses.rs
-- [ ] T004 [P] Create custom assertion helpers in tests/fixtures/helpers.rs
+- [X] T001 Create fixtures module structure in tests/fixtures/mod.rs
+- [X] T002 [P] Create test configuration fixtures in tests/fixtures/configs.rs
+- [X] T003 [P] Create Graphite response mock data in tests/fixtures/graphite_responses.rs
+- [X] T004 [P] Create custom assertion helpers in tests/fixtures/helpers.rs
 
 ---
 
@@ -41,11 +41,11 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 **⚠️ CRITICAL**: No user story testing can begin until this phase is complete
 
-- [ ] T005 Add cargo-tarpaulin to CI pipeline configuration for coverage measurement
-- [ ] T006 [P] Implement create_test_state helper function in tests/fixtures/helpers.rs
-- [ ] T007 [P] Implement create_test_state_with_mock_url helper in tests/fixtures/helpers.rs
-- [ ] T008 [P] Implement assert_metric_flag custom assertion in tests/fixtures/helpers.rs
-- [ ] T009 [P] Implement assert_health_score custom assertion in tests/fixtures/helpers.rs
+- [X] T005 Add cargo-tarpaulin to CI pipeline configuration for coverage measurement
+- [X] T006 [P] Implement create_test_state helper function in tests/fixtures/helpers.rs
+- [X] T007 [P] Implement create_test_state_with_mock_url helper in tests/fixtures/helpers.rs
+- [X] T008 [P] Implement assert_metric_flag custom assertion in tests/fixtures/helpers.rs
+- [X] T009 [P] Implement assert_health_score custom assertion in tests/fixtures/helpers.rs
 
 **Checkpoint**: Foundation ready - user story testing can now begin in parallel
 
@@ -61,17 +61,17 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation (tests are testing existing code)**
 
-- [ ] T010 [P] [US1] Test Lt operator with value < threshold returns true in src/common.rs test module
-- [ ] T011 [P] [US1] Test Lt operator with value >= threshold returns false in src/common.rs test module
-- [ ] T012 [P] [US1] Test Gt operator with value > threshold returns true in src/common.rs test module
-- [ ] T013 [P] [US1] Test Gt operator with value <= threshold returns false in src/common.rs test module
-- [ ] T014 [P] [US1] Test Eq operator with value == threshold returns true in src/common.rs test module
-- [ ] T015 [P] [US1] Test Eq operator with value != threshold returns false in src/common.rs test module
-- [ ] T016 [P] [US1] Test None value always returns false for all operators in src/common.rs test module
-- [ ] T017 [P] [US1] Test boundary conditions (threshold ± 0.001) in src/common.rs test module
-- [ ] T018 [P] [US1] Test negative values with all operators in src/common.rs test module
-- [ ] T019 [P] [US1] Test zero threshold edge case in src/common.rs test module
-- [ ] T020 [P] [US1] Test mixed operators scenario with multiple metrics in src/common.rs test module
+- [X] T010 [P] [US1] Test Lt operator with value < threshold returns true in src/common.rs test module
+- [X] T011 [P] [US1] Test Lt operator with value >= threshold returns false in src/common.rs test module
+- [X] T012 [P] [US1] Test Gt operator with value > threshold returns true in src/common.rs test module
+- [X] T013 [P] [US1] Test Gt operator with value <= threshold returns false in src/common.rs test module
+- [X] T014 [P] [US1] Test Eq operator with value == threshold returns true in src/common.rs test module
+- [X] T015 [P] [US1] Test Eq operator with value != threshold returns false in src/common.rs test module
+- [X] T016 [P] [US1] Test None value always returns false for all operators in src/common.rs test module
+- [X] T017 [P] [US1] Test boundary conditions (threshold ± 0.001) in src/common.rs test module
+- [X] T018 [P] [US1] Test negative values with all operators in src/common.rs test module
+- [X] T019 [P] [US1] Test zero threshold edge case in src/common.rs test module
+- [X] T020 [P] [US1] Test mixed operators scenario with multiple metrics in src/common.rs test module
 
 **Checkpoint**: At this point, User Story 1 should be fully tested - metric flag evaluation has comprehensive unit test coverage
 
@@ -87,11 +87,11 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 ### Tests for User Story 6
 
-- [ ] T021 [US6] Create intentional breakage test script to swap Lt/Gt operators in tests/
-- [ ] T022 [US6] Verify all US1 tests fail with clear error messages after intentional breakage
-- [ ] T023 [US6] Run full test suite with parallel execution and measure timing in CI
-- [ ] T024 [US6] Verify zero false positives - tests only fail on actual logic changes
-- [ ] T025 [US6] Document test execution in README or docs/testing.md
+- [X] T021 [US6] Create intentional breakage test script to swap Lt/Gt operators in tests/
+- [X] T022 [US6] Verify all US1 tests fail with clear error messages after intentional breakage
+- [X] T023 [US6] Run full test suite with parallel execution and measure timing in CI
+- [X] T024 [US6] Verify zero false positives - tests only fail on actual logic changes
+- [X] T025 [US6] Document test execution in README or docs/testing.md
 
 **Checkpoint**: Regression suite validated - safe refactoring enabled for metric flag evaluation
 

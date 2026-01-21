@@ -153,3 +153,324 @@ pub async fn get_service_health(
 
     return Ok(result);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{CmpType, FlagMetric};
+
+    // Helper function to create a test metric
+    fn create_test_metric(op: CmpType, threshold: f32) -> FlagMetric {
+        FlagMetric {
+            query: "test.query".to_string(),
+            op,
+            threshold,
+        }
+    }
+
+    // T010: Test Lt operator with value < threshold returns true
+    #[test]
+    fn test_lt_operator_below_threshold() {
+        let metric = create_test_metric(CmpType::Lt, 10.0);
+        let value = Some(5.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, true, "Lt operator: 5.0 < 10.0 should return true");
+    }
+
+    // T011: Test Lt operator with value >= threshold returns false
+    #[test]
+    fn test_lt_operator_above_or_equal_threshold() {
+        let metric = create_test_metric(CmpType::Lt, 10.0);
+        
+        // Test equal
+        let value = Some(10.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, false, "Lt operator: 10.0 < 10.0 should return false");
+        
+        // Test above
+        let value = Some(15.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, false, "Lt operator: 15.0 < 10.0 should return false");
+    }
+
+    // T012: Test Gt operator with value > threshold returns true
+    #[test]
+    fn test_gt_operator_above_threshold() {
+        let metric = create_test_metric(CmpType::Gt, 10.0);
+        let value = Some(15.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, true, "Gt operator: 15.0 > 10.0 should return true");
+    }
+
+    // T013: Test Gt operator with value <= threshold returns false
+    #[test]
+    fn test_gt_operator_below_or_equal_threshold() {
+        let metric = create_test_metric(CmpType::Gt, 10.0);
+        
+        // Test equal
+        let value = Some(10.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, false, "Gt operator: 10.0 > 10.0 should return false");
+        
+        // Test below
+        let value = Some(5.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, false, "Gt operator: 5.0 > 10.0 should return false");
+    }
+
+    // T014: Test Eq operator with value == threshold returns true
+    #[test]
+    fn test_eq_operator_equal_threshold() {
+        let metric = create_test_metric(CmpType::Eq, 10.0);
+        let value = Some(10.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, true, "Eq operator: 10.0 == 10.0 should return true");
+    }
+
+    // T015: Test Eq operator with value != threshold returns false
+    #[test]
+    fn test_eq_operator_not_equal_threshold() {
+        let metric = create_test_metric(CmpType::Eq, 10.0);
+        
+        // Test below
+        let value = Some(5.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, false, "Eq operator: 5.0 == 10.0 should return false");
+        
+        // Test above
+        let value = Some(15.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, false, "Eq operator: 15.0 == 10.0 should return false");
+    }
+
+    // T016: Test None value always returns false for all operators
+    #[test]
+    fn test_none_value_returns_false() {
+        let value = None;
+        
+        // Test with Lt operator
+        let metric = create_test_metric(CmpType::Lt, 10.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, false, "Lt operator with None value should return false");
+        
+        // Test with Gt operator
+        let metric = create_test_metric(CmpType::Gt, 10.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, false, "Gt operator with None value should return false");
+        
+        // Test with Eq operator
+        let metric = create_test_metric(CmpType::Eq, 10.0);
+        let result = get_metric_flag_state(&value, &metric);
+        assert_eq!(result, false, "Eq operator with None value should return false");
+    }
+
+    // T017: Test boundary conditions (threshold ± 0.001)
+    #[test]
+    fn test_boundary_conditions() {
+        let threshold = 10.0;
+        
+        // Lt operator with boundaries
+        let metric = create_test_metric(CmpType::Lt, threshold);
+        let value_below = Some(threshold - 0.001);
+        assert_eq!(
+            get_metric_flag_state(&value_below, &metric),
+            true,
+            "Lt operator: value just below threshold should return true"
+        );
+        
+        let value_above = Some(threshold + 0.001);
+        assert_eq!(
+            get_metric_flag_state(&value_above, &metric),
+            false,
+            "Lt operator: value just above threshold should return false"
+        );
+        
+        // Gt operator with boundaries
+        let metric = create_test_metric(CmpType::Gt, threshold);
+        let value_above = Some(threshold + 0.001);
+        assert_eq!(
+            get_metric_flag_state(&value_above, &metric),
+            true,
+            "Gt operator: value just above threshold should return true"
+        );
+        
+        let value_below = Some(threshold - 0.001);
+        assert_eq!(
+            get_metric_flag_state(&value_below, &metric),
+            false,
+            "Gt operator: value just below threshold should return false"
+        );
+    }
+
+    // T018: Test negative values with all operators
+    #[test]
+    fn test_negative_values() {
+        // Lt operator with negative values
+        let metric = create_test_metric(CmpType::Lt, -5.0);
+        assert_eq!(
+            get_metric_flag_state(&Some(-10.0), &metric),
+            true,
+            "Lt: -10.0 < -5.0 should return true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(-5.0), &metric),
+            false,
+            "Lt: -5.0 < -5.0 should return false"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(0.0), &metric),
+            false,
+            "Lt: 0.0 < -5.0 should return false"
+        );
+        
+        // Gt operator with negative values
+        let metric = create_test_metric(CmpType::Gt, -5.0);
+        assert_eq!(
+            get_metric_flag_state(&Some(0.0), &metric),
+            true,
+            "Gt: 0.0 > -5.0 should return true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(-5.0), &metric),
+            false,
+            "Gt: -5.0 > -5.0 should return false"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(-10.0), &metric),
+            false,
+            "Gt: -10.0 > -5.0 should return false"
+        );
+        
+        // Eq operator with negative values
+        let metric = create_test_metric(CmpType::Eq, -5.0);
+        assert_eq!(
+            get_metric_flag_state(&Some(-5.0), &metric),
+            true,
+            "Eq: -5.0 == -5.0 should return true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(-4.9), &metric),
+            false,
+            "Eq: -4.9 == -5.0 should return false"
+        );
+    }
+
+    // T019: Test zero threshold edge case
+    #[test]
+    fn test_zero_threshold() {
+        let threshold = 0.0;
+        
+        // Lt operator with zero threshold
+        let metric = create_test_metric(CmpType::Lt, threshold);
+        assert_eq!(
+            get_metric_flag_state(&Some(-1.0), &metric),
+            true,
+            "Lt: -1.0 < 0.0 should return true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(0.0), &metric),
+            false,
+            "Lt: 0.0 < 0.0 should return false"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(1.0), &metric),
+            false,
+            "Lt: 1.0 < 0.0 should return false"
+        );
+        
+        // Gt operator with zero threshold
+        let metric = create_test_metric(CmpType::Gt, threshold);
+        assert_eq!(
+            get_metric_flag_state(&Some(1.0), &metric),
+            true,
+            "Gt: 1.0 > 0.0 should return true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(0.0), &metric),
+            false,
+            "Gt: 0.0 > 0.0 should return false"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(-1.0), &metric),
+            false,
+            "Gt: -1.0 > 0.0 should return false"
+        );
+        
+        // Eq operator with zero threshold
+        let metric = create_test_metric(CmpType::Eq, threshold);
+        assert_eq!(
+            get_metric_flag_state(&Some(0.0), &metric),
+            true,
+            "Eq: 0.0 == 0.0 should return true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&Some(0.1), &metric),
+            false,
+            "Eq: 0.1 == 0.0 should return false"
+        );
+    }
+
+    // T020: Test mixed operators scenario with multiple metrics
+    #[test]
+    fn test_mixed_operators() {
+        // Create metrics with different operators
+        let lt_metric = create_test_metric(CmpType::Lt, 50.0);
+        let gt_metric = create_test_metric(CmpType::Gt, 10.0);
+        let eq_metric = create_test_metric(CmpType::Eq, 42.0);
+        
+        // Test value that satisfies Lt condition
+        let value = Some(30.0);
+        assert_eq!(
+            get_metric_flag_state(&value, &lt_metric),
+            true,
+            "30.0 < 50.0 should be true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&value, &gt_metric),
+            true,
+            "30.0 > 10.0 should be true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&value, &eq_metric),
+            false,
+            "30.0 == 42.0 should be false"
+        );
+        
+        // Test value that satisfies Eq condition
+        let value = Some(42.0);
+        assert_eq!(
+            get_metric_flag_state(&value, &lt_metric),
+            true,
+            "42.0 < 50.0 should be true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&value, &gt_metric),
+            true,
+            "42.0 > 10.0 should be true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&value, &eq_metric),
+            true,
+            "42.0 == 42.0 should be true"
+        );
+        
+        // Test value that fails all conditions
+        let value = Some(5.0);
+        assert_eq!(
+            get_metric_flag_state(&value, &lt_metric),
+            true,
+            "5.0 < 50.0 should be true"
+        );
+        assert_eq!(
+            get_metric_flag_state(&value, &gt_metric),
+            false,
+            "5.0 > 10.0 should be false"
+        );
+        assert_eq!(
+            get_metric_flag_state(&value, &eq_metric),
+            false,
+            "5.0 == 42.0 should be false"
+        );
+    }
+}
+

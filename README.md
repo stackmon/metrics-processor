@@ -66,6 +66,41 @@ mdbook serve doc/
 | [Modules](doc/modules/) | Rust module documentation |
 | [Guides](doc/guides/) | Troubleshooting, deployment |
 
+| [Testing](doc/testing.md) | Testing guide, fixtures, coverage |
+
+## Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test
+
+# Run tests with output
+cargo test -- --nocapture
+
+# Run specific test module
+cargo test common::tests
+
+# Run tests in parallel (default)
+cargo test -- --test-threads=4
+```
+
+### Test Coverage
+
+```bash
+# Install cargo-tarpaulin (if not already installed)
+cargo install cargo-tarpaulin
+
+# Run coverage report
+cargo tarpaulin --out Html
+
+# Open coverage report
+open tarpaulin-report.html
+```
+
+For detailed testing documentation, see [Testing Guide](doc/testing.md).
+
 ### JSON Schema for Configuration
 
 A JSON Schema for configuration validation is auto-generated during build:

@@ -483,7 +483,9 @@ health_metrics: {}
 
 ### Compute Services File
 
-```yaml
+> **Note:** This is a configuration fragment to be merged with the main config file.
+
+```yaml-fragment
 # conf.d/10-compute.yaml - Compute services
 ---
 flag_metrics:
@@ -530,7 +532,9 @@ health_metrics:
 
 ### Network Services File
 
-```yaml
+> **Note:** This is a configuration fragment to be merged with the main config file.
+
+```yaml-fragment
 # conf.d/20-network.yaml - Network services
 ---
 flag_metrics:
