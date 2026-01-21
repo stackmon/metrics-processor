@@ -128,6 +128,16 @@ As a developer refactoring the codebase, I need a comprehensive regression test 
 
 ---
 
+## Clarifications
+
+### Session 2025-01-24
+
+- Q: For Graphite integration testing, which mocking approach should the test suite use? → A: HTTP mock server (e.g., wiremock/mockito) - Realistic integration, tests full HTTP stack
+- Q: How should test data fixtures (sample configs, metric values, expected outputs) be organized and managed? → A: Shared fixtures per module - Reusable, DRY, good for consistency
+- Q: Should tests run in parallel or sequentially to meet the 2-minute execution goal? → A: Parallel by default (cargo test) - Fast, requires careful isolation
+- Q: What approach should be used for test assertions and failure diagnostics to ensure clear error messages? → A: Balanced approach - standard assertions for unit tests, custom assertions with business context for functional/integration tests
+- Q: Which code coverage tool should be used to measure and enforce the 95% coverage requirement? → A: cargo-tarpaulin - Rust-native, accurate line coverage
+
 ### Edge Cases
 
 - What happens when Graphite returns null or NaN values for metrics? (Should handle gracefully, not crash)
@@ -162,7 +172,7 @@ As a developer refactoring the codebase, I need a comprehensive regression test 
 
 #### Graphite Integration Testing Requirements
 
-- **FR-010**: Test suite MUST mock Graphite HTTP responses for all query scenarios (valid data, empty data, errors, timeouts)
+- **FR-010**: Test suite MUST mock Graphite HTTP responses using an HTTP mock server (e.g., wiremock-rs or httptest) for all query scenarios (valid data, empty data, errors, timeouts)
 - **FR-011**: Tests MUST verify correct parsing of Graphite JSON response format with datapoints arrays
 - **FR-012**: Tests MUST verify metric discovery (find_metrics) correctly handles hierarchical metric paths with wildcards
 - **FR-013**: Tests MUST verify query building produces valid Graphite query syntax with correct time ranges and parameters
@@ -176,10 +186,10 @@ As a developer refactoring the codebase, I need a comprehensive regression test 
 
 #### Regression Protection Requirements
 
-- **FR-018**: Test suite MUST execute in under 2 minutes to support rapid development workflow
-- **FR-019**: Tests MUST fail immediately with clear error messages when business logic behavior changes
+- **FR-018**: Test suite MUST execute in under 2 minutes to support rapid development workflow. Tests MUST run in parallel using Rust's default test runner (cargo test) with proper isolation (unique mock server ports, isolated test data) to achieve performance goals.
+- **FR-019**: Tests MUST fail immediately with clear error messages when business logic behavior changes. Functional tests, API tests, and complex integration tests MUST use custom assertion helpers that include business context (e.g., service name, metric states, expected behavior). Unit tests MAY use standard Rust assert macros for simplicity.
 - **FR-020**: Test suite MUST be runnable in CI/CD pipeline with standard Rust test tools (cargo test)
-- **FR-021**: Tests MUST be maintainable with clear naming, documentation, and modular structure
+- **FR-021**: Tests MUST be maintainable with clear naming, documentation, and modular structure. Test fixtures MUST be organized per module with shared fixtures for related tests to ensure consistency and reduce duplication.
 
 #### Error Handling Testing Requirements
 
@@ -192,11 +202,11 @@ As a developer refactoring the codebase, I need a comprehensive regression test 
 
 - **Test Case**: Represents a single automated test with setup, execution, and assertion phases. Contains test name, description, mock data fixtures, expected outcomes, and cleanup logic.
 
-- **Mock Graphite Server**: Test double that simulates Graphite TSDB responses for integration testing. Provides configurable responses for different query patterns, supports both valid data and error scenarios.
+- **Mock Graphite Server**: HTTP mock server (e.g., wiremock-rs or httptest) that simulates Graphite TSDB responses for integration testing. Runs an actual HTTP server on localhost during tests, provides configurable responses for different query patterns, supports both valid data and error scenarios. Tests the complete HTTP client stack including connection handling, timeouts, and error codes.
 
-- **Test Fixture**: Reusable test data including sample configurations, metric values, boolean expressions, and expected health scores. Organized by scenario (happy path, edge cases, errors).
+- **Test Fixture**: Reusable test data including sample configurations, metric values, boolean expressions, and expected health scores. Organized by scenario (happy path, edge cases, errors). Each test module (metric_evaluation_tests, health_aggregation_tests, etc.) maintains its own fixtures submodule with common test data shared across related tests, ensuring consistency while keeping fixtures close to where they're used.
 
-- **Coverage Report**: Generated output showing code coverage percentage for each module and function. Used to verify 95% threshold is met and identify untested code paths.
+- **Coverage Report**: Generated output showing code coverage percentage for each module and function. Generated using cargo-tarpaulin with support for HTML, lcov, and JSON formats. Used to verify 95% threshold is met and identify untested code paths. Integrated into CI/CD pipeline for automated coverage tracking.
 
 - **Test Configuration**: YAML configuration files specifically designed for testing, including minimal valid config, maximal config with all features, and invalid configs for error testing.
 
@@ -206,7 +216,7 @@ As a developer refactoring the codebase, I need a comprehensive regression test 
 
 #### Coverage Metrics
 
-- **SC-001**: Test suite achieves minimum 95% code coverage for core business functions (get_metric_flag_state, get_service_health, AppState::process_config, handler_render, get_graphite_data)
+- **SC-001**: Test suite achieves minimum 95% code coverage for core business functions (get_metric_flag_state, get_service_health, AppState::process_config, handler_render, get_graphite_data) as measured by cargo-tarpaulin
 - **SC-002**: Test suite includes minimum 50 test cases covering all priority areas (20+ for metric evaluation, 15+ for health aggregation, 10+ for API endpoints, 5+ for configuration)
 - **SC-003**: All 25 functional requirements (FR-001 through FR-025) have at least one passing test that validates the requirement
 
@@ -214,22 +224,22 @@ As a developer refactoring the codebase, I need a comprehensive regression test 
 
 - **SC-004**: Test suite completes full execution in under 2 minutes on standard development hardware
 - **SC-005**: Tests detect 100% of intentional breaking changes to business logic (deliberate changes to comparison operators, expression evaluation, weight calculations)
-- **SC-006**: Zero false positives - tests only fail when actual business logic changes, not due to test flakiness or timing issues
+- **SC-006**: Zero false positives - tests only fail when actual business logic changes, not due to test flakiness or timing issues. Tests MUST be designed for parallel execution with proper isolation to prevent race conditions.
 
 #### Refactoring Confidence
 
 - **SC-007**: Developers can refactor code structure (rename functions, split modules, reorganize files) without any test failures as long as behavior is preserved
 - **SC-008**: New developers can run test suite immediately after cloning repository with single command (cargo test) and see all tests pass
-- **SC-009**: Test failures provide clear error messages identifying which business function broke and what the expected vs actual behavior was
+- **SC-009**: Test failures provide clear error messages identifying which business function broke and what the expected vs actual behavior was. Functional and integration test failures include business context (service names, metric states, scenarios) beyond simple value comparisons.
 
 #### Documentation Value
 
 - **SC-010**: Test cases serve as executable documentation - new team members can understand business logic by reading test scenarios
 - **SC-011**: Each test case includes descriptive name and comments explaining the business scenario being tested
-- **SC-012**: Test coverage report clearly identifies any untested code paths requiring additional tests
+- **SC-012**: Test coverage report clearly identifies any untested code paths requiring additional tests. Coverage reports generated using cargo-tarpaulin in HTML and lcov formats for developer and CI integration.
 
 #### CI/CD Integration
 
 - **SC-013**: Test suite runs automatically on every pull request and blocks merge if any test fails
 - **SC-014**: Test results are reported in CI/CD pipeline within 3 minutes of commit
-- **SC-015**: Coverage reports are generated automatically and show trend over time (no coverage decrease allowed)
+- **SC-015**: Coverage reports are generated automatically using cargo-tarpaulin and show trend over time (no coverage decrease allowed)
