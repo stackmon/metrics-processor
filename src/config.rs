@@ -396,10 +396,12 @@ mod test {
     #[test]
     fn test_config_loading_from_multiple_sources() {
         // Clear any lingering environment variables from other tests
-        env::remove_var("MP_STATUS_DASHBOARD__SECRET");
-        env::remove_var("MP_STATUS_DASHBOARD__URL");
-        env::remove_var("MP_DATASOURCE__TIMEOUT");
-        env::remove_var("MP_SERVER__PORT");
+        // This is critical for test isolation when running all tests together
+        for (key, _) in env::vars() {
+            if key.starts_with("MP_") {
+                env::remove_var(&key);
+            }
+        }
         
         // Create temporary directory structure
         let dir = Builder::new().tempdir().unwrap();
@@ -458,6 +460,9 @@ mod test {
         
         // Verify environment variable merged (overrides main config)
         assert_eq!(8080, config.server.port);
+        
+        // Clean up environment variable
+        env::remove_var("MP_SERVER__PORT");
         
         // Cleanup
         env::remove_var("MP_SERVER__PORT");

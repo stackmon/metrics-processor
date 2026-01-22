@@ -577,3 +577,54 @@ mod test {
         assert_eq!(3, health_metric.expressions[1].weight);
     }
 }
+
+    /// Additional coverage test: Test CloudMonError Display implementation
+    #[test]
+    fn test_error_display() {
+        assert_eq!(
+            format!("{}", CloudMonError::ServiceNotSupported),
+            "Requested service not supported"
+        );
+        assert_eq!(
+            format!("{}", CloudMonError::EnvNotSupported),
+            "Environment for service not supported"
+        );
+        assert_eq!(
+            format!("{}", CloudMonError::ExpressionError),
+            "Internal Expression evaluation error"
+        );
+        assert_eq!(
+            format!("{}", CloudMonError::GraphiteError),
+            "Graphite error"
+        );
+    }
+
+    /// Additional coverage test: Test CloudMonError Debug implementation
+    #[test]
+    fn test_error_debug() {
+        assert_eq!(
+            format!("{:?}", CloudMonError::ServiceNotSupported),
+            "Requested service not supported"
+        );
+        assert_eq!(
+            format!("{:?}", CloudMonError::EnvNotSupported),
+            "Environment for service not supported"
+        );
+        assert_eq!(
+            format!("{:?}", CloudMonError::ExpressionError),
+            "Internal Expression evaluation error"
+        );
+        assert_eq!(
+            format!("{:?}", CloudMonError::GraphiteError),
+            "Graphite error"
+        );
+    }
+
+    /// Additional coverage test: Test BinaryMetricRawDef Default
+    #[test]
+    fn test_binary_metric_raw_def_default() {
+        let default = BinaryMetricRawDef::default();
+        assert_eq!(default.query, String::new());
+        assert_eq!(default.op, CmpType::Lt);
+        assert_eq!(default.threshold, 0.0);
+    }

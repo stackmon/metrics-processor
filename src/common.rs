@@ -952,5 +952,75 @@ mod tests {
             );
         }
     }
+
+    /// Additional coverage test: Test expression evaluation with invalid syntax
+    /// This tests the error path in health score calculation
+    #[tokio::test]
+    async fn test_invalid_expression_syntax() {
+        use mockito::Matcher;
+
+        let mut server = mockito::Server::new();
+        
+        // Mock Graphite to return valid data
+        let _mock = server
+            .mock("GET", "/render")
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::json!([
+                {
+                    "target": "svc1.metric1",
+                    "datapoints": [[15.0, 1609459200]]
+                }
+            ]).to_string())
+            .create();
+
+        let config_str = format!("
+        datasource:
+          url: '{}'
+        server:
+          port: 3000
+        metric_templates:
+          tmpl1:
+            query: 'metric.$environment.$service.count'
+            op: gt
+            threshold: 10
+        environments:
+          - name: prod
+        flag_metrics:
+          - name: metric1
+            service: svc1
+            template:
+              name: tmpl1
+            environments:
+              - name: prod
+        health_metrics:
+          svc1:
+            service: svc1
+            category: compute
+            metrics:
+              - svc1.metric1
+            expressions:
+              - expression: 'invalid syntax &&& broken'
+                weight: 1
+        ", server.url());
+
+        let config = crate::config::Config::from_config_str(&config_str);
+        let mut state = crate::types::AppState::new(config);
+        state.process_config();
+
+        // Call get_service_health with invalid expression
+        let result = get_service_health(
+            &state,
+            "svc1",
+            "prod",
+            "now-1h",
+            "now",
+            10
+        ).await;
+
+        // Should return ExpressionError
+        assert!(result.is_err(), "Should return error for invalid expression");
+    }
 }
 

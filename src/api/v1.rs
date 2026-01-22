@@ -181,8 +181,83 @@ mod test {
     }
 
     /// T050: Test /api/v1/health with valid service returns 200 + JSON
-    /// Note: This requires mocking the Graphite server which is complex
-    /// We'll test the endpoint exists and validation works, full integration in T059
+    #[tokio::test]
+    async fn test_v1_health_valid_service() {
+        // Create a mock Graphite server
+        let mut server = mockito::Server::new();
+        
+        // Mock the /render endpoint to return sample metric data
+        let _mock = server
+            .mock("GET", "/render")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::json!([
+                {
+                    "target": "test-metric",
+                    "datapoints": [
+                        [85.0, 1609459200],
+                        [90.0, 1609459260]
+                    ]
+                }
+            ]).to_string())
+            .create();
+
+        let config_str = format!("
+        datasource:
+          url: '{}'
+        server:
+          port: 3000
+        metric_templates:
+          cpu_tmpl:
+            query: 'system.$environment.$service.cpu'
+            op: gt
+            threshold: 80
+        environments:
+          - name: prod
+        flag_metrics:
+          - name: cpu-usage
+            service: webapp
+            template:
+              name: cpu_tmpl
+            environments:
+              - name: prod
+        health_metrics:
+          webapp:
+            service: webapp
+            category: compute
+            metrics:
+              - webapp.cpu-usage
+            expressions:
+              - expression: 'webapp.cpu_usage'
+                weight: 2
+        ", server.url());
+        
+        let config = config::Config::from_config_str(&config_str);
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = get_v1_routes().with_state(state);
+
+        let request = Request::builder()
+            .uri("/health?service=webapp&environment=prod&from=now-1h&to=now")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        
+        // Verify response structure
+        assert!(body.get("name").is_some());
+        assert_eq!(body["name"], "webapp");
+        assert!(body.get("service_category").is_some());
+        assert_eq!(body["service_category"], "compute");
+        assert!(body.get("environment").is_some());
+        assert_eq!(body["environment"], "prod");
+        assert!(body.get("metrics").is_some());
+    }
 
     /// T051: Test /api/v1/health with unknown service returns 409
     #[tokio::test]

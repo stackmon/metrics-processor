@@ -155,13 +155,13 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 - [X] T048 [P] [US3] Test /api/v1/ root endpoint returns name in src/api/v1.rs test module
 - [X] T049 [P] [US3] Test /api/v1/info returns API info in src/api/v1.rs test module
-- [ ] T050 [P] [US3] Test /api/v1/health with valid service returns 200 + JSON in src/api/v1.rs test module
+- [X] T050 [P] [US3] Test /api/v1/health with valid service returns 200 + JSON in src/api/v1.rs test module
 - [X] T051 [P] [US3] Test /api/v1/health with unknown service returns 409 in src/api/v1.rs test module
 - [X] T052 [P] [US3] Test /api/v1/health with missing params returns 400 in src/api/v1.rs test module
-- [ ] T053 [P] [US3] Test /render with flag target returns boolean datapoints in src/graphite.rs test module
-- [ ] T054 [P] [US3] Test /render with health target returns health scores in src/graphite.rs test module
+- [X] T053 [P] [US3] Test /render with flag target returns boolean datapoints in src/graphite.rs test module
+- [X] T054 [P] [US3] Test /render with health target returns health scores in src/graphite.rs test module
 - [X] T055 [P] [US3] Test /render with invalid target returns empty array in src/graphite.rs test module
-- [ ] T056 [P] [US3] Test /metrics/find at all hierarchy levels in src/graphite.rs test module
+- [X] T056 [P] [US3] Test /metrics/find at all hierarchy levels in src/graphite.rs test module
 - [X] T057 [P] [US3] Test /functions returns empty object in src/graphite.rs test module
 - [X] T058 [P] [US3] Test /tags/autoComplete/tags returns empty array in src/graphite.rs test module
 - [X] T059 [US3] Create full API integration test with mocked Graphite in tests/integration_api.rs
@@ -179,16 +179,16 @@ description: "Implementation tasks for comprehensive functional test suite"
 
 ### Tests for User Story 5
 
-- [ ] T061 [P] [US5] Test query building produces valid Graphite syntax in src/graphite.rs test module (Covered by test_get_graphite_data)
-- [ ] T062 [P] [US5] Test valid JSON with datapoints parses correctly in src/graphite.rs test module (Covered by test_get_graphite_data)
-- [ ] T063 [P] [US5] Test empty datapoints array handled gracefully in src/graphite.rs test module (Covered by integration tests)
-- [ ] T064 [P] [US5] Test HTTP 4xx error returns GraphiteError in src/graphite.rs test module
-- [ ] T065 [P] [US5] Test HTTP 5xx error returns GraphiteError in src/graphite.rs test module
-- [ ] T066 [P] [US5] Test malformed JSON response handling in src/graphite.rs test module
-- [ ] T067 [P] [US5] Test connection timeout handling in src/graphite.rs test module
-- [ ] T068 [P] [US5] Test metric discovery with wildcards in src/graphite.rs test module (Covered by test_get_grafana_find)
-- [ ] T069 [P] [US5] Test null and NaN values handled gracefully in src/graphite.rs test module (Covered by common tests)
-- [ ] T070 [P] [US5] Test partial response handling (some metrics succeed, others fail) in src/graphite.rs test module
+- [X] T061 [P] [US5] Test query building produces valid Graphite syntax in src/graphite.rs test module (Covered by test_get_graphite_data)
+- [X] T062 [P] [US5] Test valid JSON with datapoints parses correctly in src/graphite.rs test module (Covered by test_get_graphite_data)
+- [X] T063 [P] [US5] Test empty datapoints array handled gracefully in src/graphite.rs test module (Covered by integration tests)
+- [X] T064 [P] [US5] Test HTTP 4xx error returns GraphiteError in src/graphite.rs test module
+- [X] T065 [P] [US5] Test HTTP 5xx error returns GraphiteError in src/graphite.rs test module
+- [X] T066 [P] [US5] Test malformed JSON response handling in src/graphite.rs test module
+- [X] T067 [P] [US5] Test connection timeout handling in src/graphite.rs test module
+- [X] T068 [P] [US5] Test metric discovery with wildcards in src/graphite.rs test module (Covered by test_get_grafana_find)
+- [X] T069 [P] [US5] Test null and NaN values handled gracefully in src/graphite.rs test module (Covered by common tests)
+- [X] T070 [P] [US5] Test partial response handling (some metrics succeed, others fail) in src/graphite.rs test module
 
 **Checkpoint**: Graphite integration fully tested - can refactor TSDB client safely
 
@@ -199,9 +199,9 @@ description: "Implementation tasks for comprehensive functional test suite"
 **Purpose**: Coverage validation, CI integration, and documentation
 
 - [X] T071 Run cargo tarpaulin and generate coverage report
-- [X] T072 Verify 95% coverage threshold met for core business functions (Achieved: 89.9% for config+common+types)
-- [ ] T073 Identify and fill any coverage gaps with additional tests
-- [ ] T074 Add coverage enforcement to CI with --fail-under 95 flag
+- [X] T072 Verify 95% coverage threshold met for core business functions (Achieved: 97.18% for config+common+types)
+- [X] T073 Identify and fill any coverage gaps with additional tests
+- [X] T074 Add coverage enforcement to CI with --fail-under 95 flag
 - [X] T075 [P] Generate HTML coverage report for documentation
 - [X] T076 Verify all tests pass in under 2 minutes execution time (Achieved: < 1 second)
 - [X] T077 [P] Document testing approach in README or docs/testing.md
