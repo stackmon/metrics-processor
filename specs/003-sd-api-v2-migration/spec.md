@@ -85,7 +85,7 @@ The reporter continues to use the same authorization mechanism (HMAC-based JWT t
 
 - **FR-001**: Reporter MUST send incident data to the `/v2/incidents` endpoint instead of `/v1/component_status`
 
-- **FR-002**: Reporter MUST use the new incident data structure containing: title (static value "System incident from monitoring system"), description (structured diagnostic details including timestamp, service name, environment, component, impact value, and triggered metrics list), impact (0=none, 1=minor, 2=major, 3=critical, derived directly from service health expression weight), components (array of component IDs), start_date, system flag, and type
+- **FR-002**: Reporter MUST use the new incident data structure containing: title (static value "System incident from monitoring system"), description (empty string), impact (0=none, 1=minor, 2=major, 3=critical, derived directly from service health expression weight), components (array of component IDs), start_date, system flag, and type
 
 - **FR-003**: Reporter MUST fetch components from `/v2/components` endpoint at startup and build a cache mapping (component name, attributes) to component ID
 
@@ -115,11 +115,11 @@ The reporter continues to use the same authorization mechanism (HMAC-based JWT t
 
 - **FR-016**: Reporter MUST create a new incident request for every service health issue detection, relying on the Status Dashboard's built-in duplicate handling to return existing incidents when applicable
 
-- **FR-017**: Reporter MUST format the incident description field with structured diagnostic details containing: detection timestamp, service name, environment name, component name and attributes, impact value, and a list of all triggered metric names that contributed to the health issue detection
+- **FR-017**: Reporter MUST log structured diagnostic details containing: detection timestamp, service name, environment name, component name and attributes, impact value, and a list of all triggered metric names with values that contributed to the easest health issue detection
 
 ### Key Entities
 
-- **Incident (V2)**: Represents an incident in the Status Dashboard V2 API with fields: title (string, static value "System incident from monitoring system"), description (string containing structured diagnostic details: timestamp, service name, environment, component name and attributes, impact value, and list of triggered metrics), impact (integer 0-3 where 0=none, 1=minor, 2=major, 3=critical), components (array of component IDs), start_date (RFC3339 datetime), system (boolean), type (enum: "incident", "maintenance", "info"). The impact value is derived directly from the service health expression weight field.
+- **Incident (V2)**: Represents an incident in the Status Dashboard V2 API with fields: title (string, static value "System incident from monitoring system"), description (string, MUST be empty string), impact (integer 0-3 where 0=none, 1=minor, 2=major, 3=critical), components (array of component IDs), start_date (RFC3339 datetime), system (boolean), type (enum: "incident", "maintenance", "info"). The impact value is derived directly from the service health expression weight field. Diagnostic details (timestamp, service name, environment, component details, impact value, triggered metrics) MUST be logged for operational purposes.
 
 - **Component (V2)**: Represents a component in Status Dashboard with fields: id (integer), name (string), attributes (array of name-value pairs). Used to resolve component names to IDs.
 
@@ -170,7 +170,7 @@ The reporter continues to use the same authorization mechanism (HMAC-based JWT t
 
 ### Session 2026-01-22
 
-- Q: What content should be included in the incident description field? → A: Option B - Include structured diagnostic details (timestamp, service name, environment, component, impact, triggered metrics list).
+- Q: What content should be included in the incident description field? → A: Empty string.
 
 ## Out of Scope
 
