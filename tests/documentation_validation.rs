@@ -14,10 +14,11 @@ fn extract_yaml_blocks(content: &str) -> Vec<String> {
     let mut current_block = String::new();
 
     for line in content.lines() {
-        if line.trim().starts_with("```yaml") || line.trim().starts_with("```yml") {
+        let trimmed = line.trim();
+        if trimmed == "```yaml" || trimmed == "```yml" {
             in_yaml_block = true;
             current_block.clear();
-        } else if line.trim().starts_with("```") && in_yaml_block {
+        } else if trimmed.starts_with("```") && in_yaml_block {
             in_yaml_block = false;
             if !current_block.trim().is_empty() {
                 blocks.push(current_block.clone());
