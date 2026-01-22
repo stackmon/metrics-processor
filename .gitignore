@@ -15,3 +15,11 @@ Cargo.lock
 
 config.yaml
 conf.d
+
+# Ignore IDE/editor config files
+.vscode/
+.idea/
+*.iml
+
+# Ignore documentation output folder
+docs/

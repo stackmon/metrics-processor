@@ -20,9 +20,59 @@ metrics-processor is there to address 2 primary needs:
   component status is not healthy.
 
 
-## Project structure
+## Project Structure
 
-- src - rust source code
-- doc - mdbook sources for the documentation
-- docs - mdbook rendered content (built from `doc`) - temporarily, in future
-  documentation will be reworked.
+- `src/` - Rust source code
+- `doc/` - Documentation sources (mdbook)
+- `tests/` - Integration and validation tests
+- `specs/` - Feature specifications and implementation plans
+- `playbooks/` - Operational playbooks
+
+## Documentation
+
+The project uses [mdbook](https://rust-lang.github.io/mdBook/) for documentation. Source files are in `doc/`.
+
+### Building Documentation
+
+```bash
+# Install mdbook (if not already installed)
+cargo install mdbook mdbook-mermaid
+
+# Build documentation
+mdbook build doc/
+
+# Output will be in docs/
+open docs/index.html
+```
+
+### Serving Documentation Locally
+
+```bash
+# Serve with live reload (rebuilds on changes)
+mdbook serve doc/
+
+# Open http://localhost:3000 in your browser
+```
+
+### Documentation Contents
+
+| Section | Description |
+|---------|-------------|
+| [Getting Started](doc/getting-started/) | Quickstart guide, project structure, development workflow |
+| [Architecture](doc/architecture/) | System overview, diagrams, data flow |
+| [API Reference](doc/api/) | REST endpoints, authentication, examples |
+| [Configuration](doc/configuration/) | Config schema, examples, validation |
+| [Integration](doc/integration/) | TSDB interface, adding new backends |
+| [Modules](doc/modules/) | Rust module documentation |
+| [Guides](doc/guides/) | Troubleshooting, deployment |
+
+### JSON Schema for Configuration
+
+A JSON Schema for configuration validation is auto-generated during build:
+
+```bash
+# Schema is generated to doc/schemas/config-schema.json
+cargo build
+
+# Use in your IDE for YAML autocomplete and validation
+```
