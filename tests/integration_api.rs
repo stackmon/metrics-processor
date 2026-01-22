@@ -3,58 +3,18 @@
 //!
 //! Integration tests for API endpoints with mocked Graphite backend
 
+mod fixtures;
+
 use axum::{
     body::Body,
     http::{Request, StatusCode},
     Router,
 };
 use cloudmon_metrics::{api, config, graphite, types};
-use mockito::Matcher;
+use fixtures::{configs, graphite_responses, helpers};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-/// Helper to create test state with mock Graphite URL
-fn create_test_state_with_mock(mock_url: &str) -> types::AppState {
-    let config_str = format!(
-        "
-        datasource:
-          url: '{}'
-        server:
-          port: 3000
-        metric_templates:
-          cpu_tmpl:
-            query: 'system.$environment.$service.cpu'
-            op: gt
-            threshold: 80
-        environments:
-          - name: prod
-          - name: staging
-        flag_metrics:
-          - name: cpu-usage
-            service: webapp
-            template:
-              name: cpu_tmpl
-            environments:
-              - name: prod
-              - name: staging
-        health_metrics:
-          webapp:
-            service: webapp
-            category: compute
-            metrics:
-              - webapp.cpu-usage
-            expressions:
-              - expression: 'webapp.cpu_usage'
-                weight: 2
-        ",
-        mock_url
-    );
-    
-    let config = config::Config::from_config_str(&config_str);
-    let mut state = types::AppState::new(config);
-    state.process_config();
-    state
-}
 
 /// T059: Create full API integration test with mocked Graphite
 #[tokio::test]
@@ -63,33 +23,21 @@ async fn test_api_integration_with_mocked_graphite() {
     let mut server = mockito::Server::new();
     
     // Mock the /render endpoint to return sample metric data
-    let _mock = server
-        .mock("GET", "/render")
-        .match_query(Matcher::Any)
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(json!([
-            {
-                "target": "webapp.cpu-usage",
-                "datapoints": [
-                    [85.5, 1609459200],
-                    [90.2, 1609459260],
-                    [75.0, 1609459320]
-                ]
-            }
-        ]).to_string())
-        .create();
+    let _mock = helpers::setup_graphite_render_mock(
+        &mut server,
+        graphite_responses::webapp_cpu_response(),
+    );
 
-    // Create application state with mock URL
-    let state = create_test_state_with_mock(&server.url());
-    
+    // Create application state with mock URL using fixtures
+    let state = helpers::create_api_test_state(&server.url());
+
     // Create combined router with both API routes
     let app = Router::new()
         .nest("/api/v1", api::v1::get_v1_routes())
         .merge(graphite::get_graphite_routes())
         .with_state(state);
     
-    // Test 1: API v1 root endpoint (nested routes don't include trailing slash by default)
+    // Test 1: API v1 root endpoint
     let request = Request::builder()
         .uri("/api/v1")
         .body(Body::empty())
@@ -104,9 +52,9 @@ async fn test_api_integration_with_mocked_graphite() {
 /// Additional test for metrics endpoints
 #[tokio::test]
 async fn test_graphite_endpoints_integration() {
-    // Create application state
-    let state = create_test_state_with_mock("https://mock.example.com");
-    
+    // Create application state using fixtures
+    let state = helpers::create_api_test_state("https://mock.example.com");
+
     let app = Router::new()
         .merge(graphite::get_graphite_routes())
         .with_state(state);
@@ -128,8 +76,8 @@ async fn test_graphite_endpoints_integration() {
 /// Test for functions and tags endpoints
 #[tokio::test]
 async fn test_graphite_utility_endpoints() {
-    let state = create_test_state_with_mock("https://mock.example.com");
-    
+    let state = helpers::create_api_test_state("https://mock.example.com");
+
     // Test functions endpoint
     let app1 = Router::new()
         .merge(graphite::get_graphite_routes())
@@ -162,23 +110,8 @@ async fn test_graphite_utility_endpoints() {
 /// T060: Test error response format validation
 #[tokio::test]
 async fn test_error_response_format() {
-    let config_str = "
-        datasource:
-          url: 'https://mock-graphite.example.com'
-        server:
-          port: 3000
-        environments:
-          - name: prod
-        flag_metrics: []
-        health_metrics:
-          known-service:
-            service: known
-            category: compute
-            metrics: []
-            expressions: []
-        ";
-    
-    let config = config::Config::from_config_str(config_str);
+    let config_str = configs::empty_health_config("https://mock-graphite.example.com");
+    let config = config::Config::from_config_str(&config_str);
     let state = types::AppState::new(config);
     
     let app = Router::new()
@@ -222,37 +155,8 @@ async fn test_error_response_format() {
 /// Additional test: Verify health endpoint with known service but environment not supported
 #[tokio::test]
 async fn test_health_endpoint_unsupported_environment() {
-    let config_str = "
-        datasource:
-          url: 'https://mock-graphite.example.com'
-        server:
-          port: 3000
-        metric_templates:
-          tmpl:
-            query: 'metric'
-            op: lt
-            threshold: 1
-        environments:
-          - name: prod
-        flag_metrics:
-          - name: metric1
-            service: webapp
-            template:
-              name: tmpl
-            environments:
-              - name: prod
-        health_metrics:
-          webapp:
-            service: webapp
-            category: compute
-            metrics:
-              - webapp.metric1
-            expressions:
-              - expression: 'webapp.metric1'
-                weight: 1
-        ";
-    
-    let config = config::Config::from_config_str(config_str);
+    let config_str = configs::error_test_config("https://mock-graphite.example.com");
+    let config = config::Config::from_config_str(&config_str);
     let mut state = types::AppState::new(config);
     state.process_config();
     

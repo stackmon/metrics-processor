@@ -2,93 +2,10 @@
 // 
 // These tests verify end-to-end health calculation flows with mocked Graphite responses
 
-use cloudmon_metrics::{
-    common::get_service_health,
-    config::{Config, Datasource, ServerConf},
-    types::{AppState, CmpType, FlagMetric, MetricExpressionDef, ServiceHealthDef, EnvironmentDef},
-};
-use std::collections::HashMap;
+mod fixtures;
 
-// Helper to create a comprehensive test state for integration testing
-fn create_integration_test_state(graphite_url: &str) -> AppState {
-    let config = Config {
-        datasource: Datasource {
-            url: graphite_url.to_string(),
-            timeout: 30,
-        },
-        server: ServerConf {
-            address: "127.0.0.1".to_string(),
-            port: 3000,
-        },
-        metric_templates: Some(HashMap::new()),
-        flag_metrics: Vec::new(),
-        health_metrics: HashMap::new(),
-        environments: vec![EnvironmentDef {
-            name: "production".to_string(),
-            attributes: None,
-        }],
-        status_dashboard: None,
-    };
-
-    let mut state = AppState::new(config);
-    
-    // Setup comprehensive flag metrics for integration testing
-    let metrics = vec![
-        ("cpu_usage", CmpType::Lt, 80.0),
-        ("memory_usage", CmpType::Lt, 90.0),
-        ("error_rate", CmpType::Lt, 5.0),
-    ];
-    
-    for (name, op, threshold) in metrics {
-        let metric_key = format!("api-service.{}", name);
-        let mut env_map = HashMap::new();
-        env_map.insert(
-            "production".to_string(),
-            FlagMetric {
-                query: format!("stats.api-service.production.{}", name),
-                op: op.clone(),
-                threshold,
-            },
-        );
-        state.flag_metrics.insert(metric_key, env_map);
-    }
-    
-    // Setup health metrics with multiple weighted expressions
-    let metric_names = vec![
-        "api-service.cpu_usage".to_string(),
-        "api-service.memory_usage".to_string(),
-        "api-service.error_rate".to_string(),
-    ];
-    
-    let expressions = vec![
-        MetricExpressionDef {
-            expression: "api_service.error_rate".to_string(),
-            weight: 100, // Critical: High error rate
-        },
-        MetricExpressionDef {
-            expression: "api_service.cpu_usage && api_service.memory_usage".to_string(),
-            weight: 50, // Warning: High resource usage
-        },
-        MetricExpressionDef {
-            expression: "api_service.cpu_usage || api_service.memory_usage || api_service.error_rate".to_string(),
-            weight: 30, // Info: Any metric flagged
-        },
-    ];
-    
-    state.health_metrics.insert(
-        "api-service".to_string(),
-        ServiceHealthDef {
-            service: "api-service".to_string(),
-            component_name: None,
-            category: "compute".to_string(),
-            metrics: metric_names,
-            expressions,
-        },
-    );
-    
-    state.services.insert("api-service".to_string());
-    state
-}
+use cloudmon_metrics::common::get_service_health;
+use fixtures::{graphite_responses, helpers};
 
 // T034: End-to-end health calculation test with mocked Graphite
 #[tokio::test]
@@ -96,26 +13,15 @@ async fn test_integration_health_calculation_end_to_end() {
     let mut server = mockito::Server::new_async().await;
     let mock_url = server.url();
     
-    let state = create_integration_test_state(&mock_url);
-    
+    let state = helpers::create_health_test_state(&mock_url);
+
     // Mock Graphite response with all three metrics
     // Scenario: High error rate (critical), normal CPU and memory
-    let _mock = server
-        .mock("GET", "/render")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"[
-                {"target":"api-service.cpu_usage","datapoints":[[50.0,1234567890]]},
-                {"target":"api-service.memory_usage","datapoints":[[60.0,1234567890]]},
-                {"target":"api-service.error_rate","datapoints":[[10.0,1234567890]]}
-            ]"#,
-        )
-        .create();
-    
+    let _mock = helpers::setup_graphite_render_mock_async(
+        &mut server,
+        graphite_responses::api_service_health_response(50.0, 60.0, 10.0, 1234567890),
+    );
+
     let result = get_service_health(
         &state,
         "api-service",
@@ -137,9 +43,10 @@ async fn test_integration_health_calculation_end_to_end() {
     // - "cpu && memory": true && true = true → weight 50 ✓ highest match
     // - "cpu || memory || error": true → weight 30
     // Highest matching expression = 50
-    assert_eq!(
-        health_data[0].1, 50,
-        "Should return weight 50 (cpu && memory) since both resource metrics are true"
+    helpers::assert_health_score(
+        health_data[0].1,
+        50,
+        "cpu && memory should match since both resource metrics are true"
     );
 }
 
@@ -149,26 +56,15 @@ async fn test_integration_complex_weighted_expressions() {
     let mut server = mockito::Server::new_async().await;
     let mock_url = server.url();
     
-    let state = create_integration_test_state(&mock_url);
-    
+    let state = helpers::create_health_test_state(&mock_url);
+
     // Mock Graphite response
     // Scenario: All metrics in good state - all flags should be true
-    let _mock = server
-        .mock("GET", "/render")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"[
-                {"target":"api-service.cpu_usage","datapoints":[[70.0,1234567890]]},
-                {"target":"api-service.memory_usage","datapoints":[[85.0,1234567890]]},
-                {"target":"api-service.error_rate","datapoints":[[2.0,1234567890]]}
-            ]"#,
-        )
-        .create();
-    
+    let _mock = helpers::setup_graphite_render_mock_async(
+        &mut server,
+        graphite_responses::api_service_health_response(70.0, 85.0, 2.0, 1234567890),
+    );
+
     let result = get_service_health(
         &state,
         "api-service",
@@ -187,9 +83,10 @@ async fn test_integration_complex_weighted_expressions() {
     // - cpu && memory: true && true = true → weight 50
     // - cpu || memory || error: true → weight 30
     // Highest weight = 100
-    assert_eq!(
-        health_data[0].1, 100,
-        "Should return highest weight (100) when error_rate flag is true"
+    helpers::assert_health_score(
+        health_data[0].1,
+        100,
+        "highest weight (100) when error_rate flag is true"
     );
 }
 
@@ -199,25 +96,14 @@ async fn test_integration_edge_cases_empty_and_partial_data() {
     let mut server = mockito::Server::new_async().await;
     let mock_url = server.url();
     
-    let state = create_integration_test_state(&mock_url);
-    
+    let state = helpers::create_health_test_state(&mock_url);
+
     // Test 1: Empty datapoints array
-    let _mock1 = server
-        .mock("GET", "/render")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"[
-                {"target":"api-service.cpu_usage","datapoints":[]},
-                {"target":"api-service.memory_usage","datapoints":[]},
-                {"target":"api-service.error_rate","datapoints":[]}
-            ]"#,
-        )
-        .create();
-    
+    let _mock1 = helpers::setup_graphite_render_mock_async(
+        &mut server,
+        graphite_responses::api_service_empty_response(),
+    );
+
     let result = get_service_health(
         &state,
         "api-service",
@@ -234,22 +120,11 @@ async fn test_integration_edge_cases_empty_and_partial_data() {
     assert_eq!(health_data.len(), 0, "Empty datapoints should produce empty result");
     
     // Test 2: Partial data (some metrics missing datapoints)
-    let _mock2 = server
-        .mock("GET", "/render")
-        .match_query(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"[
-                {"target":"api-service.cpu_usage","datapoints":[[50.0,1234567900]]},
-                {"target":"api-service.memory_usage","datapoints":[]},
-                {"target":"api-service.error_rate","datapoints":[[2.0,1234567900]]}
-            ]"#,
-        )
-        .create();
-    
+    let _mock2 = helpers::setup_graphite_render_mock_async(
+        &mut server,
+        graphite_responses::api_service_partial_response(50.0, 2.0, 1234567900),
+    );
+
     let result2 = get_service_health(
         &state,
         "api-service",
@@ -271,8 +146,9 @@ async fn test_integration_edge_cases_empty_and_partial_data() {
     // - cpu && memory: true && false = false
     // - cpu || memory || error: true → 30
     // Highest = 100
-    assert_eq!(
-        health_data2[0].1, 100,
-        "Partial data should still evaluate expressions correctly with missing metrics as false"
+    helpers::assert_health_score(
+        health_data2[0].1,
+        100,
+        "Partial data should evaluate expressions correctly with missing metrics as false"
     );
 }
