@@ -397,10 +397,12 @@ mod test {
     fn test_config_loading_from_multiple_sources() {
         // Clear any lingering environment variables from other tests
         // This is critical for test isolation when running all tests together
-        for (key, _) in env::vars() {
-            if key.starts_with("MP_") {
-                env::remove_var(&key);
-            }
+        let mp_vars: Vec<String> = env::vars()
+            .filter(|(key, _)| key.starts_with("MP_"))
+            .map(|(key, _)| key)
+            .collect();
+        for key in &mp_vars {
+            env::remove_var(key);
         }
         
         // Create temporary directory structure
@@ -465,7 +467,6 @@ mod test {
         env::remove_var("MP_SERVER__PORT");
         
         // Cleanup
-        env::remove_var("MP_SERVER__PORT");
         dir.close().unwrap();
     }
 }
