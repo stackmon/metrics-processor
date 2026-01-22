@@ -49,9 +49,9 @@ check:
 # Test targets
 # ============================================================================
 
-## Run all tests
+## Run all tests (including binary targets)
 test:
-	cargo test
+	cargo test --all-targets
 
 ## Run tests with verbose output
 test-verbose:
