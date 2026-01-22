@@ -1105,4 +1105,295 @@ mod test {
         assert_eq!(data.len(), 1, "Should return data for one metric");
         assert_eq!(data[0].target, "metric1");
     }
+
+    /// Test POST handler for find_metrics (lines 214-225)
+    #[tokio::test]
+    async fn test_find_metrics_post() {
+        let f = "
+        datasource:
+          url: 'https://a.b'
+        server:
+          port: 3005
+        metric_templates:
+          tmpl1:
+            query: dummy1($environment.$service.count)
+            op: lt
+            threshold: 90
+        environments:
+          - name: env1
+        flag_metrics:
+          - name: metric-1
+            service: srvA
+            template:
+              name: tmpl1
+            environments:
+              - name: env1
+        health_metrics: {}
+";
+        let config = config::Config::from_config_str(f);
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        // POST request with JSON body
+        let request = Request::builder()
+            .method("POST")
+            .uri("/metrics/find")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"query": "*"}"#))
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// Test POST handler for render (lines 255-267)
+    #[tokio::test]
+    async fn test_render_post() {
+        let mut server = mockito::Server::new();
+        
+        let _mock = server
+            .mock("GET", "/render")
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!([]).to_string())
+            .create();
+
+        let config_str = format!("
+        datasource:
+          url: '{}'
+        server:
+          port: 3000
+        environments:
+          - name: prod
+        flag_metrics: []
+        health_metrics: {{}}
+        ", server.url());
+        
+        let config = config::Config::from_config_str(&config_str);
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        // POST request with JSON body
+        let request = Request::builder()
+            .method("POST")
+            .uri("/render")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"target": "invalid.target", "maxDataPoints": 10}"#))
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// Test exact metric search in find_metrics (lines 181-192)
+    #[tokio::test]
+    async fn test_find_metrics_exact_match() {
+        let f = "
+        datasource:
+          url: 'https://a.b'
+        server:
+          port: 3005
+        metric_templates:
+          tmpl1:
+            query: dummy1($environment.$service.count)
+            op: lt
+            threshold: 90
+        environments:
+          - name: env1
+        flag_metrics:
+          - name: metric-1
+            service: srvA
+            template:
+              name: tmpl1
+            environments:
+              - name: env1
+        health_metrics: {}
+";
+        let config = config::Config::from_config_str(f);
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        // Query for exact metric (not wildcard) - triggers lines 181-192
+        let request = Request::builder()
+            .uri("/metrics/find?query=flag.env1.srvA.metric-1")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        // Should return the exact metric
+        assert!(body.is_array());
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "srvA.metric-1");
+    }
+
+    /// Test handler_render with unknown metric in response (lines 332-333)
+    #[tokio::test]
+    async fn test_render_with_unknown_metric_in_response() {
+        let mut server = mockito::Server::new();
+        
+        // Mock returns a metric that doesn't exist in our config
+        let _mock = server
+            .mock("GET", "/render")
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!([
+                {
+                    "target": "unknown.metric",
+                    "datapoints": [[85.0, 1609459200]]
+                }
+            ]).to_string())
+            .create();
+
+        let config_str = format!("
+        datasource:
+          url: '{}'
+        server:
+          port: 3000
+        metric_templates:
+          cpu_tmpl:
+            query: 'system.$environment.$service.cpu'
+            op: gt
+            threshold: 80
+        environments:
+          - name: prod
+        flag_metrics:
+          - name: cpu-usage
+            service: webapp
+            template:
+              name: cpu_tmpl
+            environments:
+              - name: prod
+        health_metrics: {{}}
+        ", server.url());
+        
+        let config = config::Config::from_config_str(&config_str);
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        let request = Request::builder()
+            .uri("/render?target=flag.prod.webapp.cpu-usage&from=now-1h&to=now&maxDataPoints=10")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// Test handler_render with wildcard metric (lines 280-284)
+    #[tokio::test]
+    async fn test_render_wildcard_metric() {
+        let mut server = mockito::Server::new();
+        
+        let _mock = server
+            .mock("GET", "/render")
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!([
+                {
+                    "target": "webapp.cpu-usage",
+                    "datapoints": [[85.0, 1609459200]]
+                }
+            ]).to_string())
+            .create();
+
+        let config_str = format!("
+        datasource:
+          url: '{}'
+        server:
+          port: 3000
+        metric_templates:
+          cpu_tmpl:
+            query: 'system.$environment.$service.cpu'
+            op: gt
+            threshold: 80
+        environments:
+          - name: prod
+        flag_metrics:
+          - name: cpu-usage
+            service: webapp
+            template:
+              name: cpu_tmpl
+            environments:
+              - name: prod
+        health_metrics: {{}}
+        ", server.url());
+        
+        let config = config::Config::from_config_str(&config_str);
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        // Use wildcard in target
+        let request = Request::builder()
+            .uri("/render?target=flag.prod.webapp.*&from=now-1h&to=now&maxDataPoints=10")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// Test handler_render error path (lines 343-345)
+    #[tokio::test]
+    async fn test_render_graphite_error() {
+        let mut server = mockito::Server::new();
+        
+        // Return an error status
+        let _mock = server
+            .mock("GET", "/render")
+            .match_query(Matcher::Any)
+            .with_status(500)
+            .with_body("Internal Server Error")
+            .create();
+
+        let config_str = format!("
+        datasource:
+          url: '{}'
+        server:
+          port: 3000
+        metric_templates:
+          cpu_tmpl:
+            query: 'system.$environment.$service.cpu'
+            op: gt
+            threshold: 80
+        environments:
+          - name: prod
+        flag_metrics:
+          - name: cpu-usage
+            service: webapp
+            template:
+              name: cpu_tmpl
+            environments:
+              - name: prod
+        health_metrics: {{}}
+        ", server.url());
+        
+        let config = config::Config::from_config_str(&config_str);
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        let request = Request::builder()
+            .uri("/render?target=flag.prod.webapp.cpu-usage&from=now-1h&to=now&maxDataPoints=10")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        // Should return OK with error message
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert!(body.get("message").is_some());
+    }
 }

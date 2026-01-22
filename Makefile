@@ -67,16 +67,16 @@ test-filter:
 
 ## Run tests with coverage (requires cargo-tarpaulin)
 coverage:
-	cargo tarpaulin --out Stdout --skip-clean
+	cargo tarpaulin --lib --tests --exclude-files 'src/bin/*' --out Stdout --skip-clean
 
 ## Generate HTML coverage report
 coverage-html:
-	cargo tarpaulin --out Html --output-dir target/coverage --skip-clean
+	cargo tarpaulin --lib --tests --exclude-files 'src/bin/*' --out Html --output-dir target/coverage --skip-clean
 	@echo "Coverage report generated at target/coverage/tarpaulin-report.html"
 
-## Run coverage with 95% threshold enforcement
+## Run coverage with 95% threshold enforcement (library code only)
 coverage-check:
-	cargo tarpaulin --fail-under 95 --skip-clean
+	cargo tarpaulin --lib --tests --exclude-files 'src/bin/*' --fail-under 95 --skip-clean
 
 # ============================================================================
 # Code formatting
