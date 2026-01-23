@@ -432,7 +432,9 @@ mod test {
         health_metrics: {}
         ";
         main_config.write_all(main_config_content.as_bytes()).unwrap();
-        
+        // Ensure file is flushed and closed before reading
+        drop(main_config);
+
         // Write conf.d part
         let flags_config_content = "
         flag_metrics:
@@ -445,7 +447,9 @@ mod test {
         ";
         let mut flags_config = File::create(confd_path.join("flags.yaml")).unwrap();
         flags_config.write_all(flags_config_content.as_bytes()).unwrap();
-        
+        // Ensure file is flushed and closed before reading
+        drop(flags_config);
+
         // Set environment variable for server port (override main config)
         env::set_var("MP_SERVER__PORT", "8080");
         
