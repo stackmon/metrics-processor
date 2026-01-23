@@ -10,6 +10,9 @@
 CONVERTOR_BIN = cloudmon-metrics-convertor
 REPORTER_BIN = cloudmon-metrics-reporter
 
+# Tool versions
+TARPAULIN_VERSION = 0.35.1
+
 # Default target
 all: fmt-check lint test build
 
@@ -149,7 +152,7 @@ clean-all: clean
 ## Install required development tools
 install-tools:
 	rustup component add rustfmt clippy
-	cargo install cargo-tarpaulin
+	cargo install cargo-tarpaulin --version $(TARPAULIN_VERSION)
 	cargo install mdbook mdbook-mermaid mdbook-linkcheck
 
 ## Run all quality checks (CI simulation)

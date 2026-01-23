@@ -9,17 +9,16 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  TARPAULIN_VERSION: 0.35.1
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    container:
+      image: rust:latest
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
 # Temporarily disabled linting and formatting checks, to be re-enabled later.
 #    - name: Check formatting
 #      run: make fmt-check
@@ -32,15 +31,13 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
+    container:
+      image: xd009642/tarpaulin:${{ env.TARPAULIN_VERSION }}
+      options: --security-opt seccomp=unconfined
     needs: test
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Install cargo-tarpaulin
-      run: cargo install cargo-tarpaulin
 
     - name: Run tests with coverage
       run: make coverage-check
