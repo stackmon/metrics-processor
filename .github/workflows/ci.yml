@@ -8,8 +8,8 @@ on:
   pull_request:
 
 env:
-  CARGO_TERM_COLOR: always
-  TARPAULIN_VERSION: 0.35.1
+  CARGO_TERM_COLOR: 'always'
+  TARPAULIN_VERSION: '0.35.1'
 
 jobs:
   test:
