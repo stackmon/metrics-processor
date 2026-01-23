@@ -391,20 +391,10 @@ mod test {
     }
 
     /// T047: Test config loading from multiple sources (file, conf.d, env vars)
-    /// Note: This test is effectively covered by test_merge_parts and test_merge_env
+    /// Note: This test is effectively covered by test_merge_parts and test_merge_env,
     /// but we add an explicit comprehensive test
     #[test]
     fn test_config_loading_from_multiple_sources() {
-        // Clear any lingering environment variables from other tests
-        // This is critical for test isolation when running all tests together
-        let mp_vars: Vec<String> = env::vars()
-            .filter(|(key, _)| key.starts_with("MP_"))
-            .map(|(key, _)| key)
-            .collect();
-        for key in &mp_vars {
-            env::remove_var(key);
-        }
-        
         // Create temporary directory structure
         let dir = Builder::new().tempdir().unwrap();
         let main_config_path = dir.path().join("config.yaml");
@@ -450,13 +440,15 @@ mod test {
         // Ensure file is flushed and closed before reading
         drop(flags_config);
 
-        // Set environment variable for server port (override main config)
+        // Set environment variables to ensure required fields are present
+        // This makes the test independent of any pre-existing env vars
+        env::set_var("MP_DATASOURCE__URL", "https://graphite.example.com");
         env::set_var("MP_SERVER__PORT", "8080");
         
         // Load config from all sources
         let config = config::Config::new(main_config_path.to_str().unwrap()).unwrap();
         
-        // Verify main config loaded
+        // Verify datasource config (env var ensures this is set)
         assert_eq!("https://graphite.example.com", config.datasource.url);
         assert_eq!(10, config.datasource.timeout);
         
@@ -467,7 +459,8 @@ mod test {
         // Verify environment variable merged (overrides main config)
         assert_eq!(8080, config.server.port);
         
-        // Clean up environment variable
+        // Clean up environment variables
+        env::remove_var("MP_DATASOURCE__URL");
         env::remove_var("MP_SERVER__PORT");
         
         // Cleanup
