@@ -85,7 +85,7 @@ The reporter continues to use the same authorization mechanism (HMAC-based JWT t
 
 - **FR-001**: Reporter MUST send incident data to the `/v2/incidents` endpoint instead of `/v1/component_status`
 
-- **FR-002**: Reporter MUST use the new incident data structure containing: title (static value "System incident from monitoring system"), description (empty string), impact (0=none, 1=minor, 2=major, 3=critical, derived directly from service health expression weight), components (array of component IDs), start_date, system flag, and type
+- **FR-002**: Reporter MUST use the new incident data structure containing: title (static value "System incident from monitoring system"), description (static value "System-wide incident affecting one or multiple components. Created automatically." - generic text that does not expose sensitive operational data since the Status Dashboard is public), impact (0=none, 1=minor, 2=major, 3=critical, derived directly from service health expression weight), components (array of component IDs), start_date, system flag, and type
 
 - **FR-003**: Reporter MUST fetch components from `/v2/components` endpoint at startup and build a cache mapping (component name, attributes) to component ID
 
@@ -115,17 +115,30 @@ The reporter continues to use the same authorization mechanism (HMAC-based JWT t
 
 - **FR-016**: Reporter MUST create a new incident request for every service health issue detection, relying on the Status Dashboard's built-in duplicate handling to return existing incidents when applicable
 
-- **FR-017**: Reporter MUST log structured diagnostic details containing: detection timestamp, service name, environment name, component name and attributes, impact value, and a list of all triggered metric names with values that contributed to the easest health issue detection
+### Logging Requirements
+
+- **FR-017**: Reporter MUST log structured diagnostic details for incident investigation containing: detection timestamp, service name, environment name, component name and attributes, impact value, and a list of all triggered metric names with values that contributed to the earliest health issue detection. These details MUST NOT be included in API requests to prevent exposing sensitive operational data on the public Status Dashboard.
 
 ### Key Entities
 
-- **Incident (V2)**: Represents an incident in the Status Dashboard V2 API with fields: title (string, static value "System incident from monitoring system"), description (string, MUST be empty string), impact (integer 0-3 where 0=none, 1=minor, 2=major, 3=critical), components (array of component IDs), start_date (RFC3339 datetime), system (boolean), type (enum: "incident", "maintenance", "info"). The impact value is derived directly from the service health expression weight field. Diagnostic details (timestamp, service name, environment, component details, impact value, triggered metrics) MUST be logged for operational purposes.
+- **Incident (V2)**: Represents an incident in the Status Dashboard V2 API.
+  - **API Fields**: title (string, static value "System incident from monitoring system"), description (string, static value "System-wide incident affecting one or multiple components. Created automatically."), impact (integer 0-3 where 0=none, 1=minor, 2=major, 3=critical, derived directly from service health expression weight), components (array of component IDs), start_date (RFC3339 datetime), system (boolean, always true), type (enum: "incident", "maintenance", "info", always "incident" for auto-created).
+  - **Security Note**: Description uses a generic message to prevent exposing sensitive operational data (timestamps, service names, environments, component details, impact values, triggered metrics) on the public Status Dashboard.
 
 - **Component (V2)**: Represents a component in Status Dashboard with fields: id (integer), name (string), attributes (array of name-value pairs). Used to resolve component names to IDs.
 
 - **Component Cache**: In-memory mapping from (component name, sorted attributes) to component ID, used to avoid repeated API calls for component resolution
 
 - **Service Health Point**: Enhanced health metric data containing: timestamp, impact value, list of triggered metric names, and optional metric value for detailed logging
+
+### Operational Logging (Not Sent to API)
+
+Diagnostic details for incident investigation are logged locally and MUST NOT be included in API requests:
+- Detection timestamp
+- Service name and environment name
+- Component name and attributes
+- Impact value (0-3)
+- List of triggered metric names with their values
 
 ## Success Criteria *(mandatory)*
 
@@ -170,7 +183,10 @@ The reporter continues to use the same authorization mechanism (HMAC-based JWT t
 
 ### Session 2026-01-22
 
-- Q: What content should be included in the incident description field? → A: Empty string.
+- Q: What content should be included in the incident description field? → A: Use a static generic message "System-wide incident affecting one or multiple components. Created automatically." This provides context without exposing sensitive operational data on the public Status Dashboard.
+- Q: Should FR-017 (diagnostic logging) be kept? → A: Yes, FR-017 is required for incident investigations. Diagnostic details MUST be logged locally but MUST NOT be sent to the API.
+- Q: How should API fields be separated from logging requirements? → A: Incident (V2) entity now clearly separates API Fields from Operational Logging requirements. API receives generic non-sensitive data; logs contain full diagnostic details for operators.
+- Q: What exact wording should the description field use? → A: "System-wide incident affecting one or multiple components. Created automatically." - using "one or multiple" (not just "multiple") to accurately describe that incidents can affect a single component or several.
 
 ## Out of Scope
 

@@ -1,0 +1,39 @@
+[
+  {
+    "id": 218,
+    "name": "Object Storage Service",
+    "attributes": [
+      {
+        "name": "category",
+        "value": "Storage"
+      },
+      {
+        "name": "region",
+        "value": "EU-DE"
+      }
+    ]
+  },
+  {
+    "id": 254,
+    "name": "Compute Service",
+    "attributes": [
+      {
+        "name": "category",
+        "value": "Compute"
+      },
+      {
+        "name": "region",
+        "value": "EU-NL"
+      },
+      {
+        "name": "type",
+        "value": "vm"
+      }
+    ]
+  },
+  {
+    "id": 312,
+    "name": "Database Service",
+    "attributes": []
+  }
+]
