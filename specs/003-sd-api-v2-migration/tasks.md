@@ -82,11 +82,11 @@
 
 ### Implementation for User Story 2
 
-- [ ] T016 [US2] Add component cache initialization in metric_watcher() to fetch and build cache at startup
-- [ ] T017 [US2] Implement cache miss detection in metric_watcher() when component not found during lookup
-- [ ] T018 [US2] Implement single cache refresh attempt (call fetch_components + rebuild cache) on cache miss per FR-005
-- [ ] T019 [US2] Add warning logging when component still not found after cache refresh per FR-015
-- [ ] T020 [US2] Add continue to next service logic when component cannot be resolved (no retry on incident creation)
+- [x] T016 [US2] Add component cache initialization in metric_watcher() to fetch and build cache at startup
+- [x] T017 [US2] Implement cache miss detection in metric_watcher() when component not found during lookup
+- [x] T018 [US2] Implement single cache refresh attempt (call fetch_components + rebuild cache) on cache miss per FR-005
+- [x] T019 [US2] Add warning logging when component still not found after cache refresh per FR-015
+- [x] T020 [US2] Add continue to next service logic when component cannot be resolved (no retry on incident creation)
 
 **Checkpoint**: User Story 2 complete - cache management with automatic refresh working
 

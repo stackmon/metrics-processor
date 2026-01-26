@@ -271,8 +271,8 @@ async fn metric_watcher(config: &Config) {
         headers.insert(AUTHORIZATION, bearer.parse().unwrap());
     }
 
-    // Initialize component ID cache (TODO: Phase 4 - add retry logic)
-    let component_cache = match fetch_components(&req_client, &sdb_config.url, &headers).await {
+    // Initialize component ID cache at startup (T016)
+    let mut component_cache = match fetch_components(&req_client, &sdb_config.url, &headers).await {
         Ok(components) => {
             tracing::info!("Fetched {} components from Status Dashboard", components.len());
             build_component_id_cache(components)
@@ -324,12 +324,41 @@ async fn metric_watcher(config: &Config) {
                                                 .get(component.0)
                                                 .unwrap();
 
-                                            // Find component ID in cache
-                                            match find_component_id(&component_cache, comp) {
-                                                Some(component_id) => {
+                                            // T017: Find component ID in cache (cache miss detection)
+                                            let mut component_id = find_component_id(&component_cache, comp);
+
+                                            // T018: If component not found, refresh cache once per FR-005
+                                            if component_id.is_none() {
+                                                tracing::info!(
+                                                    component_name = comp.name.as_str(),
+                                                    service = component.0.as_str(),
+                                                    environment = env.name.as_str(),
+                                                    "Component not found in cache, attempting cache refresh"
+                                                );
+
+                                                match fetch_components(&req_client, &sdb_config.url, &headers).await {
+                                                    Ok(components) => {
+                                                        tracing::info!("Cache refreshed with {} components", components.len());
+                                                        component_cache = build_component_id_cache(components);
+                                                        // Retry lookup after refresh
+                                                        component_id = find_component_id(&component_cache, comp);
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!(
+                                                            error = %e,
+                                                            component_name = comp.name.as_str(),
+                                                            "Failed to refresh component cache"
+                                                        );
+                                                    }
+                                                }
+                                            }
+
+                                            // Process component if found
+                                            match component_id {
+                                                Some(id) => {
                                                     // Build incident data
                                                     let incident_data = build_incident_data(
-                                                        component_id,
+                                                        id,
                                                         last.1,
                                                         last.0 as i64,
                                                     );
@@ -340,7 +369,7 @@ async fn metric_watcher(config: &Config) {
                                                         service = component.0.as_str(),
                                                         environment = env.name.as_str(),
                                                         component_name = comp.name.as_str(),
-                                                        component_id = component_id,
+                                                        component_id = id,
                                                         impact = last.1,
                                                         "Creating incident for health issue"
                                                     );
@@ -354,7 +383,7 @@ async fn metric_watcher(config: &Config) {
                                                     ).await {
                                                         Ok(_) => {
                                                             tracing::info!(
-                                                                component_id = component_id,
+                                                                component_id = id,
                                                                 impact = last.1,
                                                                 "Incident created successfully"
                                                             );
@@ -363,7 +392,7 @@ async fn metric_watcher(config: &Config) {
                                                             // Error logging with details (FR-015)
                                                             tracing::error!(
                                                                 error = %e,
-                                                                component_id = component_id,
+                                                                component_id = id,
                                                                 service = component.0.as_str(),
                                                                 environment = env.name.as_str(),
                                                                 "Failed to create incident"
@@ -372,12 +401,15 @@ async fn metric_watcher(config: &Config) {
                                                     }
                                                 }
                                                 None => {
+                                                    // T019, T020: Warning logging and continue to next service
                                                     tracing::warn!(
                                                         component_name = comp.name.as_str(),
                                                         service = component.0.as_str(),
                                                         environment = env.name.as_str(),
-                                                        "Component not found in cache, skipping incident creation"
+                                                        "Component not found in cache even after refresh, skipping incident creation"
                                                     );
+                                                    // Continue to next service (no retry on incident creation)
+                                                    continue;
                                                 }
                                             }
                                         }
