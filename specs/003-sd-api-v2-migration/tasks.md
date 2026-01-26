@@ -58,15 +58,15 @@
 
 ### Implementation for User Story 1
 
-- [ ] T007 [P] [US1] Implement fetch_components() async function in src/bin/reporter.rs to call GET /v2/components
-- [ ] T008 [P] [US1] Implement build_component_id_cache() function in src/bin/reporter.rs to construct nested HashMap
-- [ ] T009 [US1] Implement find_component_id() function in src/bin/reporter.rs with subset attribute matching per FR-012
-- [ ] T010 [US1] Implement build_incident_data() function in src/bin/reporter.rs with static title/description per FR-002
-- [ ] T011 [US1] Add timestamp handling with RFC3339 format and -1 second adjustment in build_incident_data() per FR-011
-- [ ] T012 [US1] Implement create_incident() async function in src/bin/reporter.rs to POST /v2/incidents
-- [ ] T013 [US1] Update metric_watcher() to replace V1 endpoint (/v1/component_status) with V2 incident creation
-- [ ] T014 [US1] Add structured logging with diagnostic fields (timestamp, service, environment, component details, impact, triggered_metrics) per FR-017
-- [ ] T015 [US1] Add error logging for incident creation failures with status and response body per FR-015
+- [x] T007 [P] [US1] Implement fetch_components() async function in src/bin/reporter.rs to call GET /v2/components
+- [x] T008 [P] [US1] Implement build_component_id_cache() function in src/bin/reporter.rs to construct nested HashMap
+- [x] T009 [US1] Implement find_component_id() function in src/bin/reporter.rs with subset attribute matching per FR-012
+- [x] T010 [US1] Implement build_incident_data() function in src/bin/reporter.rs with static title/description per FR-002
+- [x] T011 [US1] Add timestamp handling with RFC3339 format and -1 second adjustment in build_incident_data() per FR-011
+- [x] T012 [US1] Implement create_incident() async function in src/bin/reporter.rs to POST /v2/incidents
+- [x] T013 [US1] Update metric_watcher() to replace V1 endpoint (/v1/component_status) with V2 incident creation
+- [x] T014 [US1] Add structured logging with diagnostic fields (timestamp, service, environment, component details, impact) per FR-017
+- [x] T015 [US1] Add error logging for incident creation failures with status and response body per FR-015
 
 **Checkpoint**: User Story 1 complete - reporter can create incidents via V2 API
 

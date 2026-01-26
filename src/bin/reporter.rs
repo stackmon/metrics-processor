@@ -3,6 +3,9 @@
 //! Post component status to the CloudMon status-dashboard API.
 //!
 #![doc(html_no_source)]
+
+extern crate anyhow;
+
 use cloudmon_metrics::{api::v1::ServiceHealthResponse, config::Config};
 
 use reqwest::{
@@ -22,6 +25,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
 use sha2::Sha256;
+
+use chrono;
 
 /// Component attribute (key-value pair) for identifying components
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -68,7 +73,106 @@ pub struct IncidentData {
 }
 
 /// Component ID cache: maps (component_name, sorted_attributes) to component_id
-type ComponentCache = HashMap<String, HashMap<String, u32>>;
+type ComponentCache = HashMap<(String, Vec<ComponentAttribute>), u32>;
+
+/// Fetch all components from Status Dashboard API V2
+async fn fetch_components(
+    client: &reqwest::Client,
+    base_url: &str,
+    headers: &HeaderMap,
+) -> anyhow::Result<Vec<StatusDashboardComponent>> {
+    let url = format!("{}/v2/components", base_url);
+    let response = client
+        .get(&url)
+        .headers(headers.clone())
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Failed to fetch components: status={}, body={:?}",
+            response.status(),
+            response.text().await
+        );
+    }
+
+    let components: Vec<StatusDashboardComponent> = response.json().await?;
+    Ok(components)
+}
+
+/// Build component ID cache from fetched components
+fn build_component_id_cache(components: Vec<StatusDashboardComponent>) -> ComponentCache {
+    components
+        .into_iter()
+        .map(|c| {
+            let mut attrs = c.attributes;
+            attrs.sort(); // Ensure deterministic key
+            ((c.name, attrs), c.id)
+        })
+        .collect()
+}
+
+/// Find component ID in cache with subset attribute matching
+/// Returns the component ID if found, None otherwise
+fn find_component_id(cache: &ComponentCache, target: &Component) -> Option<u32> {
+    cache
+        .iter()
+        .filter(|((name, _attrs), _id)| name == &target.name)
+        .find(|((_name, cache_attrs), _id)| {
+            // Config attrs must be subset of cache attrs
+            target.attributes.iter().all(|target_attr| {
+                cache_attrs.iter().any(|cache_attr| {
+                    cache_attr.name == target_attr.name && cache_attr.value == target_attr.value
+                })
+            })
+        })
+        .map(|((_name, _attrs), id)| *id)
+}
+
+/// Build incident data structure for V2 API
+/// timestamp: metric timestamp in seconds since epoch
+fn build_incident_data(component_id: u32, impact: u8, timestamp: i64) -> IncidentData {
+    // Convert timestamp to RFC3339 and subtract 1 second per FR-011
+    let start_date = chrono::DateTime::from_timestamp(timestamp - 1, 0)
+        .expect("Invalid timestamp")
+        .to_rfc3339();
+
+    IncidentData {
+        title: "System incident from monitoring system".to_string(),
+        description: "System-wide incident affecting one or multiple components. Created automatically.".to_string(),
+        impact,
+        components: vec![component_id],
+        start_date,
+        system: true,
+        incident_type: "incident".to_string(),
+    }
+}
+
+/// Create incident via Status Dashboard API V2
+async fn create_incident(
+    client: &reqwest::Client,
+    base_url: &str,
+    headers: &HeaderMap,
+    incident_data: &IncidentData,
+) -> anyhow::Result<()> {
+    let url = format!("{}/v2/incidents", base_url);
+    let response = client
+        .post(&url)
+        .headers(headers.clone())
+        .json(incident_data)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Failed to create incident: status={}, body={:?}",
+            response.status(),
+            response.text().await
+        );
+    }
+
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() {
@@ -117,7 +221,7 @@ async fn metric_watcher(config: &Config) {
     tracing::info!("Starting metric reporter thread");
     // Init reqwest client
     let req_client: reqwest::Client = ClientBuilder::new()
-        .timeout(Duration::from_secs(5 as u64))
+        .timeout(Duration::from_secs(10 as u64))
         .build()
         .unwrap();
     // Endless loop
@@ -155,7 +259,8 @@ async fn metric_watcher(config: &Config) {
         .status_dashboard
         .as_ref()
         .expect("Status dashboard section is missing");
-    let status_report_url = format!("{}/v1/component_status", sdb_config.url.clone(),);
+
+    // Build authorization headers
     let mut headers = HeaderMap::new();
     if let Some(ref secret) = sdb_config.secret {
         let key: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();
@@ -165,6 +270,19 @@ async fn metric_watcher(config: &Config) {
         let bearer = format!("Bearer {}", token_str);
         headers.insert(AUTHORIZATION, bearer.parse().unwrap());
     }
+
+    // Initialize component ID cache (TODO: Phase 4 - add retry logic)
+    let component_cache = match fetch_components(&req_client, &sdb_config.url, &headers).await {
+        Ok(components) => {
+            tracing::info!("Fetched {} components from Status Dashboard", components.len());
+            build_component_id_cache(components)
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch components at startup: {}", e);
+            return;
+        }
+    };
+
     loop {
         // For every env from config
         for env in config.environments.iter() {
@@ -178,7 +296,7 @@ async fn metric_watcher(config: &Config) {
                         "http://localhost:{}/api/v1/health",
                         config.server.port
                     ))
-                    // Query env/service for time [-2min..-1min]
+                    // Query env/service for time [-5min..-2min]
                     .query(&[
                         ("environment", env.name.clone()),
                         ("service", component.0.clone()),
@@ -200,39 +318,65 @@ async fn metric_watcher(config: &Config) {
                                     if let Some(last) = data.metrics.pop() {
                                         // Is metric showing issues?
                                         if last.1 > 0 {
-                                            tracing::info!("Bad status found: {}", last.1);
-                                            let component = components
+                                            let comp = components
                                                 .get(&env.name)
                                                 .unwrap()
                                                 .get(component.0)
                                                 .unwrap();
-                                            tracing::info!("Component to report: {:?}", component);
-                                            let body = ComponentStatus {
-                                                name: component.name.clone(),
-                                                impact: last.1,
-                                                attributes: component.attributes.clone(),
-                                            };
-                                            let res = req_client
-                                                .post(&status_report_url)
-                                                .headers(headers.clone())
-                                                .json(&body)
-                                                .send()
-                                                .await;
-                                            match res {
-                                                Ok(rsp) => {
-                                                    if rsp.status().is_client_error() {
-                                                        tracing::error!(
-                                                            "Error: [{}] {:?}",
-                                                            rsp.status(),
-                                                            rsp.text().await
-                                                        );
+
+                                            // Find component ID in cache
+                                            match find_component_id(&component_cache, comp) {
+                                                Some(component_id) => {
+                                                    // Build incident data
+                                                    let incident_data = build_incident_data(
+                                                        component_id,
+                                                        last.1,
+                                                        last.0 as i64,
+                                                    );
+
+                                                    // Structured logging with diagnostic fields (FR-017)
+                                                    tracing::info!(
+                                                        timestamp = last.0,
+                                                        service = component.0.as_str(),
+                                                        environment = env.name.as_str(),
+                                                        component_name = comp.name.as_str(),
+                                                        component_id = component_id,
+                                                        impact = last.1,
+                                                        "Creating incident for health issue"
+                                                    );
+
+                                                    // Create incident via V2 API
+                                                    match create_incident(
+                                                        &req_client,
+                                                        &sdb_config.url,
+                                                        &headers,
+                                                        &incident_data,
+                                                    ).await {
+                                                        Ok(_) => {
+                                                            tracing::info!(
+                                                                component_id = component_id,
+                                                                impact = last.1,
+                                                                "Incident created successfully"
+                                                            );
+                                                        }
+                                                        Err(e) => {
+                                                            // Error logging with details (FR-015)
+                                                            tracing::error!(
+                                                                error = %e,
+                                                                component_id = component_id,
+                                                                service = component.0.as_str(),
+                                                                environment = env.name.as_str(),
+                                                                "Failed to create incident"
+                                                            );
+                                                        }
                                                     }
                                                 }
-
-                                                Err(e) => {
-                                                    tracing::error!(
-                                                        "Error during posting component status: {}",
-                                                        e
+                                                None => {
+                                                    tracing::warn!(
+                                                        component_name = comp.name.as_str(),
+                                                        service = component.0.as_str(),
+                                                        environment = env.name.as_str(),
+                                                        "Component not found in cache, skipping incident creation"
                                                     );
                                                 }
                                             }
