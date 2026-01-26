@@ -39,10 +39,10 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T003 [P] Add StatusDashboardComponent struct in src/bin/reporter.rs for V2 API response
-- [ ] T004 [P] Update ComponentAttribute with PartialOrd, Ord, Hash derives in src/bin/reporter.rs
-- [ ] T005 [P] Add IncidentData struct in src/bin/reporter.rs for V2 incident payload
-- [ ] T006 Create ComponentCache type alias HashMap<String, HashMap<String, u64>> in src/bin/reporter.rs
+- [x] T003 [P] Add StatusDashboardComponent struct in src/bin/reporter.rs for V2 API response
+- [x] T004 [P] Update ComponentAttribute with PartialOrd, Ord, Hash derives in src/bin/reporter.rs
+- [x] T005 [P] Add IncidentData struct in src/bin/reporter.rs for V2 incident payload
+- [x] T006 Create ComponentCache type alias HashMap<String, HashMap<String, u64>> in src/bin/reporter.rs
 
 **Checkpoint**: Foundation ready - all user stories can now proceed
 

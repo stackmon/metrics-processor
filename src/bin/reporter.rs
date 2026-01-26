@@ -15,33 +15,60 @@ use tokio::time::{sleep, Duration};
 
 use serde::{Deserialize, Serialize};
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
 use sha2::Sha256;
-use std::collections::BTreeMap;
 
-#[derive(Clone, Deserialize, Serialize, Debug)]
+/// Component attribute (key-value pair) for identifying components
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct ComponentAttribute {
     pub name: String,
     pub value: String,
 }
 
+/// Component definition from configuration
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct Component {
     pub name: String,
     pub attributes: Vec<ComponentAttribute>,
 }
 
+/// Component status for V1 API (legacy, will be replaced)
 #[derive(Deserialize, Serialize, Debug)]
 pub struct ComponentStatus {
     pub name: String,
     pub impact: u8,
     pub attributes: Vec<ComponentAttribute>,
 }
+
+/// Component data from Status Dashboard API V2 GET /v2/components response
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct StatusDashboardComponent {
+    pub id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub attributes: Vec<ComponentAttribute>,
+}
+
+/// Incident data for Status Dashboard API V2 POST /v2/incidents request
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct IncidentData {
+    pub title: String,
+    pub description: String,
+    pub impact: u8,
+    pub components: Vec<u32>,
+    pub start_date: String,
+    pub system: bool,
+    #[serde(rename = "type")]
+    pub incident_type: String,
+}
+
+/// Component ID cache: maps (component_name, sorted_attributes) to component_id
+type ComponentCache = HashMap<String, HashMap<String, u32>>;
 
 #[tokio::main]
 async fn main() {
