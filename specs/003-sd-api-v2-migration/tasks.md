@@ -102,11 +102,26 @@
 
 ### Implementation for User Story 3
 
-- [ ] T021 [US3] Verify existing HMAC-JWT token generation in metric_watcher() is reused for V2 endpoints
-- [ ] T022 [US3] Verify Authorization header format remains unchanged (Bearer {jwt-token}) for V2 API calls
-- [ ] T023 [US3] Test that reporter operates without auth headers when no secret configured (optional auth)
+- [x] T021 [US3] Verify existing HMAC-JWT token generation in metric_watcher() is reused for V2 endpoints
+  - ✅ VERIFIED: Token generation at lines 268-274 uses same HMAC-SHA256 algorithm
+  - ✅ VERIFIED: Same `headers` variable passed to both `fetch_components()` and `create_incident()`
+  
+- [x] T022 [US3] Verify Authorization header format remains unchanged (Bearer {jwt-token}) for V2 API calls
+  - ✅ VERIFIED: Line 274 uses same format: `format!("Bearer {}", token_str)`
+  - ✅ VERIFIED: Header inserted with same `AUTHORIZATION` constant
+  
+- [x] T023 [US3] Test that reporter operates without auth headers when no secret configured (optional auth)
+  - ✅ VERIFIED: Line 268 guards with `if let Some(ref secret) = sdb_config.secret`
+  - ✅ VERIFIED: Empty `headers` passed to V2 endpoints when no secret configured
 
 **Checkpoint**: User Story 3 complete - authorization verified unchanged for V2
+
+**Verification Summary**:
+- ✅ No code changes required - existing auth mechanism works with V2 endpoints
+- ✅ HMAC-JWT token generation unchanged (same algorithm, same claims)
+- ✅ Authorization header format unchanged (Bearer token)
+- ✅ Optional authentication supported (works with or without secret)
+- ✅ Headers reused for both GET /v2/components and POST /v2/incidents
 
 ---
 

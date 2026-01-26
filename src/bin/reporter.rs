@@ -260,7 +260,12 @@ async fn metric_watcher(config: &Config) {
         .as_ref()
         .expect("Status dashboard section is missing");
 
-    // Build authorization headers
+    // Build authorisation headers (T021, T022, T023 - US3)
+    // VERIFIED: Existing HMAC-JWT mechanism works unchanged with V2 endpoints
+    // - Same token generation algorithm (HMAC-SHA256)
+    // - Same Authorization header format (Bearer {jwt-token})
+    // - Optional auth supported (only adds header if secret configured)
+    // - Headers reused for both GET /v2/components and POST /v2/incidents
     let mut headers = HeaderMap::new();
     if let Some(ref secret) = sdb_config.secret {
         let key: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();
