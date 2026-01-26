@@ -90,7 +90,7 @@ async fn metric_watcher(config: &Config) {
     tracing::info!("Starting metric reporter thread");
     // Init reqwest client
     let req_client: reqwest::Client = ClientBuilder::new()
-        .timeout(Duration::from_secs(2 as u64))
+        .timeout(Duration::from_secs(5 as u64))
         .build()
         .unwrap();
     // Endless loop
