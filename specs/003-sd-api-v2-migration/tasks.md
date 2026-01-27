@@ -131,12 +131,20 @@
 
 **FR Coverage**: FR-006, FR-007
 
-- [ ] T024 Add initial component cache load with 3 retry attempts in metric_watcher() per FR-006
-- [ ] T025 Add 60-second delay between cache load retry attempts per FR-006
-- [ ] T026 Add error return from metric_watcher() if cache load fails after 3 attempts per FR-007
-- [ ] T027 Add warning logging for each failed cache load attempt with attempt number
+- [x] T024 Add initial component cache load with 3 retry attempts in metric_watcher() per FR-006
+- [x] T025 Add 60-second delay between cache load retry attempts per FR-006
+- [x] T026 Add error return from metric_watcher() if cache load fails after 3 attempts per FR-007
+- [x] T027 Add warning logging for each failed cache load attempt with attempt number
 
 **Checkpoint**: Startup reliability complete - reporter handles API unavailability
+
+**Implementation Summary**:
+- ✅ Retry loop with 1-3 attempts implemented (lines 285-323)
+- ✅ 60-second delay using `sleep(Duration::from_secs(60))` between attempts
+- ✅ Reporter exits via `return` if all attempts fail (FR-007)
+- ✅ Structured logging with attempt number, max_attempts, retry_delay_seconds
+- ✅ Info log on success, warning log on retry, error log on final failure
+- ✅ Cache initialization broken into Option<ComponentCache> with unwrap after loop
 
 ---
 

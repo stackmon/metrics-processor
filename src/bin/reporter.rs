@@ -276,14 +276,59 @@ async fn metric_watcher(config: &Config) {
         headers.insert(AUTHORIZATION, bearer.parse().unwrap());
     }
 
-    // Initialize component ID cache at startup (T016)
-    let mut component_cache = match fetch_components(&req_client, &sdb_config.url, &headers).await {
-        Ok(components) => {
-            tracing::info!("Fetched {} components from Status Dashboard", components.len());
-            build_component_id_cache(components)
+    // Initialize component ID cache at startup with retry logic (T024, T025, T026, T027)
+    // Per FR-006: 3 retry attempts with 60-second delays
+    // Per FR-007: Fail to start if all attempts fail
+    let mut component_cache = None;
+    let max_attempts = 3;
+
+    for attempt in 1..=max_attempts {
+        tracing::info!(
+            attempt = attempt,
+            max_attempts = max_attempts,
+            "Attempting to fetch components from Status Dashboard"
+        );
+
+        match fetch_components(&req_client, &sdb_config.url, &headers).await {
+            Ok(components) => {
+                tracing::info!(
+                    attempt = attempt,
+                    component_count = components.len(),
+                    "Successfully fetched components from Status Dashboard"
+                );
+                component_cache = Some(build_component_id_cache(components));
+                break;
+            }
+            Err(e) => {
+                // T027: Warning logging for each failed attempt with attempt number
+                if attempt < max_attempts {
+                    tracing::warn!(
+                        error = %e,
+                        attempt = attempt,
+                        max_attempts = max_attempts,
+                        retry_delay_seconds = 60,
+                        "Failed to fetch components, will retry after delay"
+                    );
+                    // T025: 60-second delay between retry attempts
+                    sleep(Duration::from_secs(60)).await;
+                } else {
+                    // T026: Final failure after all attempts
+                    tracing::error!(
+                        error = %e,
+                        attempt = attempt,
+                        max_attempts = max_attempts,
+                        "Failed to fetch components after all retry attempts, reporter cannot start"
+                    );
+                }
+            }
         }
-        Err(e) => {
-            tracing::error!("Failed to fetch components at startup: {}", e);
+    }
+
+    // T026: Error return from metric_watcher if cache load fails per FR-007
+    let mut component_cache = match component_cache {
+        Some(cache) => cache,
+        None => {
+            tracing::error!("Component cache initialization failed, exiting metric_watcher");
             return;
         }
     };
