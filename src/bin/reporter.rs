@@ -78,13 +78,13 @@ async fn metric_watcher(config: &Config) {
     tracing::info!("Starting metric reporter thread");
     // Init reqwest client
     let req_client: reqwest::Client = ClientBuilder::new()
-        .timeout(Duration::from_secs(10 as u64))
+        .timeout(Duration::from_secs(10))
         .build()
         .unwrap();
     // Endless loop
     let mut components: HashMap<String, HashMap<String, Component>> = HashMap::new();
     for env in config.environments.iter() {
-        let comp_env_entry = components.entry(env.name.clone()).or_insert(HashMap::new());
+        let comp_env_entry = components.entry(env.name.clone()).or_default();
         let mut env_attrs: Vec<ComponentAttribute> = Vec::new();
         if let Some(ref attrs) = env.attributes {
             for (key, val) in attrs.iter() {

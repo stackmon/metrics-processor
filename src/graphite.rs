@@ -92,14 +92,14 @@ where
 }
 
 pub fn get_graphite_routes() -> Router<AppState> {
-    return Router::new()
+    Router::new()
         .route("/functions", get(handler_functions))
         .route(
             "/metrics/find",
             get(handler_metrics_find_get).post(handler_metrics_find_post),
         )
         .route("/render", get(handler_render).post(handler_render))
-        .route("/tags/autoComplete/tags", get(handler_tags));
+        .route("/tags/autoComplete/tags", get(handler_tags))
 }
 
 /// Handler for graphite list supported functions API
@@ -206,7 +206,7 @@ pub fn find_metrics(find_request: MetricsQuery, state: AppState) -> Vec<Metric> 
         }
         tracing::debug!("Elements {:?}", target_parts);
     }
-    return metrics;
+    metrics
 }
 
 /// POST Handler for graphite find metrics API
@@ -217,13 +217,13 @@ pub async fn handler_metrics_find_post(
 ) -> impl IntoResponse {
     tracing::debug!("Processing find query={:?}", query);
     let metrics: Vec<Metric> = find_metrics(query, state);
-    return (
+    (
         StatusCode::OK,
         Json(json!(metrics
             .into_iter()
             .sorted_by(|a, b| Ord::cmp(&a.text, &b.text))
             .collect::<Vec<Metric>>())),
-    );
+    )
 }
 
 /// GET Handler for graphite find metrics API
@@ -234,13 +234,13 @@ pub async fn handler_metrics_find_get(
 ) -> impl IntoResponse {
     tracing::debug!("Processing find query={:?}", query);
     let metrics: Vec<Metric> = find_metrics(query, state);
-    return (
+    (
         StatusCode::OK,
         Json(json!(metrics
             .into_iter()
             .sorted_by(|a, b| Ord::cmp(&a.text, &b.text))
             .collect::<Vec<Metric>>())),
-    );
+    )
 }
 
 /// Handler for graphite render API
@@ -286,18 +286,15 @@ pub async fn handler_render(
                         }
                     }
                 } else if let Some(metric) = state.flag_metrics.get(&metric_name) {
-                    match metric.get(environment) {
-                        Some(m) => {
-                            graphite_targets.insert(metric_name.clone(), m.query.clone());
-                        }
-                        _ => {}
-                    };
+                    if let Some(m) = metric.get(environment) {
+                        graphite_targets.insert(metric_name.clone(), m.query.clone());
+                    }
                 }
                 tracing::debug!("Requesting Graphite {:?}", graphite_targets);
 
                 match get_graphite_data(
                     &state.req_client,
-                    &state.config.datasource.url.as_str(),
+                    state.config.datasource.url.as_str(),
                     &graphite_targets,
                     None,
                     from,
@@ -386,6 +383,7 @@ fn alias_graphite_query(query: &str, alias: &str) -> String {
 }
 
 /// Fetch required data from Graphite
+#[allow(clippy::too_many_arguments)]
 pub async fn get_graphite_data(
     client: &reqwest::Client,
     url: &str,
@@ -428,18 +426,18 @@ pub async fn get_graphite_data(
         Ok(rsp) => {
             if rsp.status().is_client_error() {
                 tracing::error!("Error: {:?}", rsp.text().await);
-                return Err(CloudMonError::GraphiteError);
+                Err(CloudMonError::GraphiteError)
             } else {
                 tracing::trace!("Status: {}", rsp.status());
                 tracing::trace!("Headers:\n{:#?}", rsp.headers());
                 match rsp.json().await {
-                    Ok(dt) => return Ok(dt),
-                    Err(_) => return Err(CloudMonError::GraphiteError),
+                    Ok(dt) => Ok(dt),
+                    Err(_) => Err(CloudMonError::GraphiteError),
                 }
             }
         }
-        Err(_) => return Err(CloudMonError::GraphiteError),
-    };
+        Err(_) => Err(CloudMonError::GraphiteError),
+    }
 }
 ///
 /// Handler for graphite tags API
