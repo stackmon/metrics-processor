@@ -6,19 +6,20 @@ This document provides a high-level overview of the metrics-processor crate modu
 
 | Module | Primary Responsibility | Key Types | Dependencies | Used By |
 |--------|----------------------|-----------|--------------|---------|
-| `lib` | Crate entry point | - | `api`, `common`, `config`, `graphite`, `types` | External consumers |
+| `lib` | Crate entry point | - | `api`, `common`, `config`, `graphite`, `sd`, `types` | External consumers |
 | `api` | HTTP API routing | - | `api::v1` | `main` binary |
 | `api::v1` | V1 REST endpoints | `HealthQuery`, `ServiceHealthResponse` | `common`, `types` | `api` |
 | `config` | Configuration parsing | `Config`, `Datasource`, `ServerConf` | `types` | `types`, `main` |
 | `types` | Core data structures | `AppState`, `FlagMetric`, `ServiceHealthDef` | `config` | All modules |
 | `graphite` | Graphite TSDB interface | `GraphiteData`, `Metric`, `RenderRequest` | `common`, `types` | `common`, `api::v1` |
 | `common` | Shared utilities | - | `types`, `graphite` | `api::v1`, `graphite` |
+| `sd` | Status Dashboard API | `IncidentData`, `ComponentCache`, `StatusDashboardComponent` | `anyhow`, `hmac`, `jwt` | `reporter` binary |
 
 ## Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                       main binary                           │
+│                    convertor binary                         │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -46,6 +47,23 @@ This document provides a high-level overview of the metrics-processor crate modu
                      ┌─────────────────┐
                      │   HTTP Server   │
                      │     (Axum)      │
+                     └─────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                     reporter binary                         │
+└─────────────────────────────────────────────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│      config     │  │       sd        │  │   api::v1       │
+│  (Config load)  │  │ (Status Dash)   │  │  (Query health) │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+                              │
+                              ▼
+                     ┌─────────────────┐
+                     │ Status Dashboard│
+                     │   V2 API        │
                      └─────────────────┘
 ```
 

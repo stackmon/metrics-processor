@@ -1,138 +1,179 @@
 # CloudMon Metrics Reporter
 
-The **reporter** component is a background service that polls the convertor API and sends health status updates to a status dashboard (e.g., Atlassian Statuspage).
+The **reporter** component is a background service that polls the convertor API and creates incidents in the Status Dashboard when health issues are detected.
 
 ## Overview
 
 The reporter acts as a bridge between the convertor's real-time health evaluation and external status dashboards:
-1. Polls convertor API at regular intervals
-2. Checks if service health has degraded (status > 0)
-3. Sends notifications to status dashboard
-4. Handles authentication and dashboard-specific protocols
+1. Initializes component ID cache from Status Dashboard API V2
+2. Polls convertor API at regular intervals (60 seconds)
+3. Checks if service health has degraded (impact > 0)
+4. Creates incidents via Status Dashboard API
+5. Handles HMAC-JWT authentication
 
 **Key Characteristics**:
 - **Background service**: Runs as daemon or scheduled job
+- **Component caching**: Maintains ID cache with automatic refresh on miss
+- **V2 API integration**: Uses Status Dashboard V2 endpoints for incident creation
 - **Stateless polling**: Queries convertor each interval
-- **Conditional notifications**: Only notifies when health degraded
-- **Dashboard integration**: Handles JWT authentication and API protocols
+- **Startup reliability**: 3 retry attempts with 60s delays for initial cache load
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────┐
-│        Reporter (endless loop)               │
-│                                              │
-│  while true:                                 │
-│    sleep(poll_interval)                      │
-│    ┌───────────────────────────────────┐    │
-│    │ 1. Query Convertor API            │    │
-│    │    GET /v1/health for all services│    │
-│    └─────────────┬─────────────────────┘    │
-│                  ▼                           │
-│    ┌───────────────────────────────────┐    │
-│    │ 2. Check Health Status            │    │
-│    │    if status > 0: send update     │    │
-│    └─────────────┬─────────────────────┘    │
-│                  ▼                           │
-│    ┌───────────────────────────────────┐    │
-│    │ 3. Generate JWT Token             │    │
-│    │    HMAC-SHA256 with secret        │    │
-│    └─────────────┬─────────────────────┘    │
-│                  ▼                           │
-│    ┌───────────────────────────────────┐    │
-│    │ 4. Send to Status Dashboard       │    │
-│    │    POST to dashboard API          │    │
-│    └───────────────────────────────────┘    │
-│                                              │
-└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│        Reporter (endless loop)                               │
+│                                                              │
+│  startup:                                                    │
+│    ┌───────────────────────────────────────┐                │
+│    │ 1. Fetch Components (3 retries)       │                │
+│    │    GET /v2/components                 │                │
+│    │    Build component ID cache           │                │
+│    └─────────────┬─────────────────────────┘                │
+│                  ▼                                           │
+│  while true:                                                 │
+│    sleep(60s)                                                │
+│    ┌───────────────────────────────────────┐                │
+│    │ 2. Query Convertor API                │                │
+│    │    GET /api/v1/health for all services│                │
+│    └─────────────┬─────────────────────────┘                │
+│                  ▼                                           │
+│    ┌───────────────────────────────────────┐                │
+│    │ 3. Check Health Status                │                │
+│    │    if impact > 0: create incident     │                │
+│    └─────────────┬─────────────────────────┘                │
+│                  ▼                                           │
+│    ┌───────────────────────────────────────┐                │
+│    │ 4. Resolve Component ID               │                │
+│    │    Lookup in cache (refresh if miss)  │                │
+│    └─────────────┬─────────────────────────┘                │
+│                  ▼                                           │
+│    ┌───────────────────────────────────────┐                │
+│    │ 5. Create Incident via V2 API         │                │
+│    │    POST /v2/events                    │                │
+│    └───────────────────────────────────────┘                │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## Processing Flow
 
-### 1. Polling Loop
+### 1. Component Cache Initialization
 
-The reporter runs an infinite loop:
+At startup, the reporter fetches all components and builds an ID cache:
+
+```rust
+// Fetch components from Status Dashboard V2 API
+let components = fetch_components(&client, &url, &headers).await?;
+
+// Build cache: HashMap<(name, sorted_attributes), component_id>
+let cache = build_component_id_cache(components);
+```
+
+**Retry Logic**:
+- 3 attempts with 60-second delays between retries
+- Reporter exits if all attempts fail (FR-007)
+
+### 2. Polling Loop
+
+The reporter runs an infinite loop with 60-second intervals:
 
 ```rust
 loop {
-    // Sleep for configured interval
-    tokio::time::sleep(Duration::from_secs(poll_interval)).await;
-    
-    // Query all services
-    for service in services {
-        let health = query_convertor(service, environment).await;
-        
-        if health.status > 0 {
-            send_to_dashboard(health).await;
+    // For each environment and service
+    for env in environments {
+        for service in services {
+            let health = query_convertor(service, env).await?;
+            
+            if health.impact > 0 {
+                // Resolve component ID from cache
+                let component_id = find_component_id(&cache, &component)?;
+                
+                // Create incident via V2 API
+                let incident = build_incident_data(component_id, impact, timestamp);
+                create_incident(&client, &url, &headers, &incident).await?;
+            }
         }
     }
+    sleep(Duration::from_secs(60)).await;
 }
 ```
 
-**Configuration**:
-- Poll interval: Typically 60-300 seconds
-- Services to monitor: Defined in configuration
-- Environments: Usually production only
+### 3. Component ID Resolution
 
-### 2. Health Status Check
+Components are looked up using subset attribute matching:
 
-**Logic**:
-- Status 0 (healthy): No action, service operating normally
-- Status 1 (degraded): Send incident to dashboard
-- Status 2 (outage): Send critical incident to dashboard
-
-**Threshold Behavior**:
-- Reporter does not interpret status values
-- Dashboard receives raw status (0/1/2)
-- Dashboard decides incident creation/update logic
-
-### 3. Dashboard Integration
-
-#### Authentication
-
-The reporter uses JWT tokens for authentication:
-
+```rust
+// Config attributes must be a SUBSET of cache attributes
+// Example: config has {region: "EU-DE"}
+//          cache has {region: "EU-DE", category: "Storage"}
+// Result: MATCH (config attrs are subset of cache attrs)
 ```
-Header:
+
+**Cache Miss Handling**:
+- If component not found, refresh cache once
+- Retry lookup after refresh
+- Log warning and skip if still not found
+
+### 4. Incident Creation
+
+Incidents are created with static, secure payloads:
+
+```json
 {
-  "alg": "HS256",
-  "typ": "JWT"
+  "title": "System incident from monitoring system",
+  "description": "System-wide incident affecting one or multiple components. Created automatically.",
+  "impact": 2,
+  "components": [218],
+  "start_date": "2024-01-20T12:00:00Z",
+  "system": true,
+  "type": "incident"
 }
-
-Payload:
-{
-  "service": "api",
-  "environment": "production",
-  "status": 1,
-  "timestamp": 1640000000
-}
-
-Signature:
-HMAC-SHA256(
-  base64(header) + "." + base64(payload),
-  secret
-)
 ```
 
-**Token Generation**:
-1. Create payload with service info
-2. Sign with HMAC-SHA256 using shared secret
-3. Encode as JWT token
-4. Include in `Authorization: Bearer <token>` header
+**Important**:
+- Title and description are static (not user-controlled) for security
+- Timestamp is RFC3339 format, minus 1 second from metric timestamp
+- `system: true` indicates auto-generated incident
 
-#### API Request
+### 5. Authentication
 
-```bash
-curl -X POST https://dashboard.example.com/api/incidents \
-  -H "Authorization: Bearer eyJhbGc..." \
-  -H "Content-Type: application/json" \
-  -d '{
-    "service": "api",
-    "environment": "production",
-    "status": 1,
-    "message": "Service degraded",
-    "timestamp": "2024-01-20T12:00:00Z"
-  }'
+The reporter uses HMAC-JWT for authentication (unchanged from V1):
+
+```rust
+// Generate HMAC-JWT token
+let headers = build_auth_headers(secret.as_deref());
+// Headers contain: Authorization: Bearer <jwt-token>
+```
+
+**Token Format**:
+- Algorithm: HMAC-SHA256
+- Claims: `{"stackmon": "dummy"}`
+- Optional: No secret = no auth header (for environments without auth)
+
+## Module Structure
+
+The Status Dashboard integration is consolidated in `src/sd.rs`:
+
+```rust
+// src/sd.rs - Status Dashboard integration module
+
+// Data Structures
+pub struct ComponentAttribute { name, value }
+pub struct Component { name, attributes }
+pub struct StatusDashboardComponent { id, name, attributes }
+pub struct IncidentData { title, description, impact, components, start_date, system, type }
+pub type ComponentCache = HashMap<(String, Vec<ComponentAttribute>), u32>;
+
+// Authentication
+pub fn build_auth_headers(secret: Option<&str>) -> HeaderMap
+
+// V2 API Functions
+pub async fn fetch_components(...) -> Result<Vec<StatusDashboardComponent>>
+pub fn build_component_id_cache(...) -> ComponentCache
+pub fn find_component_id(...) -> Option<u32>
+pub fn build_incident_data(...) -> IncidentData
+pub async fn create_incident(...) -> Result<()>
 ```
 
 ## Configuration

@@ -66,13 +66,18 @@ health_metrics:
 
 ### Step 1: Define Data Structures
 
-Add these structs to `src/bin/reporter.rs`:
+The Status Dashboard integration is consolidated in `src/sd.rs` library module. Add/update these structs:
 
 ```rust
-use anyhow::Result;
-use chrono::{DateTime, Utc};
+// src/sd.rs - Status Dashboard integration module
+
+use anyhow;
+use hmac::{Hmac, Mac};
+use jwt::SignWithKey;
+use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use sha2::Sha256;
+use std::collections::{BTreeMap, HashMap};
 
 // Update ComponentAttribute to support sorting and hashing
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]

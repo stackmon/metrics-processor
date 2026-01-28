@@ -234,14 +234,14 @@ fn test_timestamp_rfc3339_minus_one_second() {
     assert!(incident_data.start_date.ends_with('Z') || incident_data.start_date.contains('+'));
 }
 
-/// T034: Test create_incident_success - verify POST /v2/incidents with mockito
+/// T034: Test create_incident_success - verify POST with mockito
 #[tokio::test]
 async fn test_create_incident_success() {
     let mut server = mockito::Server::new_async().await;
 
-    // Mock POST /v2/incidents endpoint
+    // Mock POST endpoint
     let mock = server
-        .mock("POST", "/v2/incidents")
+        .mock("POST", "/v2/events")
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(

@@ -42,7 +42,7 @@ pub struct StatusDashboardComponent {
     pub attributes: Vec<ComponentAttribute>,
 }
 
-/// Incident data for Status Dashboard API V2 POST /v2/incidents request
+/// Incident data for Status Dashboard API V2 POST request
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct IncidentData {
     pub title: String,
@@ -159,7 +159,7 @@ pub async fn create_incident(
     headers: &HeaderMap,
     incident_data: &IncidentData,
 ) -> anyhow::Result<()> {
-    let url = format!("{}/v2/incidents", base_url);
+    let url = format!("{}/v2/events", base_url);
     let response = client
         .post(&url)
         .headers(headers.clone())
