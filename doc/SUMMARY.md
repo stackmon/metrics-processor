@@ -47,3 +47,6 @@
 # Operational Guides
 - [Troubleshooting](guides/troubleshooting.md)
 - [Deployment](guides/deployment.md)
+
+# Testing
+- [Testing Guide](testing.md)

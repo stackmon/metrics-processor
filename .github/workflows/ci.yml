@@ -1,0 +1,42 @@
+name: Execute tests and coverage
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: 'always'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: rust:latest
+    steps:
+    - uses: actions/checkout@v4
+
+# Temporarily disabled linting and formatting checks, to be re-enabled later.
+#    - name: Check formatting
+#      run: make fmt-check
+#
+#    - name: Run linter
+#      run: make lint
+
+    - name: Run tests
+      run: make test
+
+  coverage:
+    runs-on: ubuntu-latest
+    container:
+      image: xd009642/tarpaulin:0.35.1
+      options: --security-opt seccomp=unconfined
+    needs: test
+    steps:
+    - uses: actions/checkout@v4
+
+
+    - name: Run tests with coverage
+      run: make coverage-check

@@ -109,3 +109,217 @@ pub async fn handler_health(query: Query<HealthQuery>, State(state): State<AppSt
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use serde_json::Value;
+    use tower::ServiceExt; // For ready() and call()
+    use tower::Service; // For call()
+    use crate::config;
+    use crate::types;
+
+    /// T048: Test /api/v1/ root endpoint returns name
+    #[tokio::test]
+    async fn test_v1_root_endpoint() {
+        let config_str = "
+        datasource:
+          url: 'https://graphite.example.com'
+        server:
+          port: 3000
+        environments:
+          - name: prod
+        flag_metrics: []
+        health_metrics: {}
+        ";
+        let config = config::Config::from_config_str(config_str);
+        let state = types::AppState::new(config);
+        let mut app = get_v1_routes().with_state(state);
+
+        let request = Request::builder()
+            .uri("/")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body, serde_json::json!({"name": "v1"}));
+    }
+
+    /// T049: Test /api/v1/info returns API info
+    #[tokio::test]
+    async fn test_v1_info_endpoint() {
+        let config_str = "
+        datasource:
+          url: 'https://graphite.example.com'
+        server:
+          port: 3000
+        environments:
+          - name: prod
+        flag_metrics: []
+        health_metrics: {}
+        ";
+        let config = config::Config::from_config_str(config_str);
+        let state = types::AppState::new(config);
+        let mut app = get_v1_routes().with_state(state);
+
+        let request = Request::builder()
+            .uri("/info")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("V1 API of the CloudMon"));
+    }
+
+    /// T050: Test /api/v1/health with valid service returns 200 + JSON
+    #[tokio::test]
+    async fn test_v1_health_valid_service() {
+        // Create a mock Graphite server
+        let mut server = mockito::Server::new();
+        
+        // Mock the /render endpoint to return sample metric data
+        let _mock = server
+            .mock("GET", "/render")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::json!([
+                {
+                    "target": "test-metric",
+                    "datapoints": [
+                        [85.0, 1609459200],
+                        [90.0, 1609459260]
+                    ]
+                }
+            ]).to_string())
+            .create();
+
+        let config_str = format!("
+        datasource:
+          url: '{}'
+        server:
+          port: 3000
+        metric_templates:
+          cpu_tmpl:
+            query: 'system.$environment.$service.cpu'
+            op: gt
+            threshold: 80
+        environments:
+          - name: prod
+        flag_metrics:
+          - name: cpu-usage
+            service: webapp
+            template:
+              name: cpu_tmpl
+            environments:
+              - name: prod
+        health_metrics:
+          webapp:
+            service: webapp
+            category: compute
+            metrics:
+              - webapp.cpu-usage
+            expressions:
+              - expression: 'webapp.cpu_usage'
+                weight: 2
+        ", server.url());
+        
+        let config = config::Config::from_config_str(&config_str);
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = get_v1_routes().with_state(state);
+
+        let request = Request::builder()
+            .uri("/health?service=webapp&environment=prod&from=now-1h&to=now")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        
+        // Verify response structure
+        assert!(body.get("name").is_some());
+        assert_eq!(body["name"], "webapp");
+        assert!(body.get("service_category").is_some());
+        assert_eq!(body["service_category"], "compute");
+        assert!(body.get("environment").is_some());
+        assert_eq!(body["environment"], "prod");
+        assert!(body.get("metrics").is_some());
+    }
+
+    /// T051: Test /api/v1/health with unknown service returns 409
+    #[tokio::test]
+    async fn test_v1_health_unknown_service() {
+        let config_str = "
+        datasource:
+          url: 'https://graphite.example.com'
+        server:
+          port: 3000
+        environments:
+          - name: prod
+        flag_metrics: []
+        health_metrics:
+          known-service:
+            service: known
+            category: compute
+            metrics: []
+            expressions: []
+        ";
+        let config = config::Config::from_config_str(config_str);
+        let state = types::AppState::new(config);
+        let mut app = get_v1_routes().with_state(state);
+
+        let request = Request::builder()
+            .uri("/health?service=unknown-service&environment=prod&from=now-1h&to=now")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert!(body["message"].as_str().unwrap().contains("not supported"));
+    }
+
+    /// T052: Test /api/v1/health with missing params returns 400
+    #[tokio::test]
+    async fn test_v1_health_missing_params() {
+        let config_str = "
+        datasource:
+          url: 'https://graphite.example.com'
+        server:
+          port: 3000
+        environments:
+          - name: prod
+        flag_metrics: []
+        health_metrics: {}
+        ";
+        let config = config::Config::from_config_str(config_str);
+        let state = types::AppState::new(config);
+        let mut app = get_v1_routes().with_state(state);
+
+        // Missing required query parameters
+        let request = Request::builder()
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        // Axum returns 400 BAD_REQUEST for missing required query params
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+

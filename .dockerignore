@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+
+# CI/CD
+.github
+zuul.yaml
+.pre-commit-config.yaml
+
+# IDE/Editor
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# Documentation
+docs/
+doc/
+README.md
+CONTRIBUTING.md
+LICENSE
+
+# Test artifacts
+tests/
+coverage/
+tarpaulin-report.html
+cobertura.xml
+
+# Configuration
+config.yaml
+conf.d/
+
+# Logs
+*.log
+
+# Specs and planning
+specs/
+.specify/
+
+# Environment
+.env*

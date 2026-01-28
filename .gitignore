@@ -23,3 +23,8 @@ conf.d
 
 # Ignore documentation output folder
 docs/
+
+# Coverage reports
+coverage/
+tarpaulin-report.html
+cobertura.xml
