@@ -3,12 +3,13 @@
 //! This module contains all functionality for integrating with the Status Dashboard API,
 //! including component management, incident creation, cache operations, and authentication.
 
-use reqwest::header::HeaderMap;
-use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use anyhow;
 use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
+use reqwest::header::HeaderMap;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use std::collections::{BTreeMap, HashMap};
 
 /// Component attribute (key-value pair) for identifying components
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -75,10 +76,7 @@ pub fn build_auth_headers(secret: Option<&str>) -> HeaderMap {
         claims.insert("stackmon", "dummy");
         let token_str = claims.sign_with_key(&key).unwrap();
         let bearer = format!("Bearer {}", token_str);
-        headers.insert(
-            reqwest::header::AUTHORIZATION,
-            bearer.parse().unwrap()
-        );
+        headers.insert(reqwest::header::AUTHORIZATION, bearer.parse().unwrap());
     }
     headers
 }
@@ -90,11 +88,7 @@ pub async fn fetch_components(
     headers: &HeaderMap,
 ) -> anyhow::Result<Vec<StatusDashboardComponent>> {
     let url = format!("{}/v2/components", base_url);
-    let response = client
-        .get(&url)
-        .headers(headers.clone())
-        .send()
-        .await?;
+    let response = client.get(&url).headers(headers.clone()).send().await?;
 
     if !response.status().is_success() {
         anyhow::bail!(
@@ -147,7 +141,9 @@ pub fn build_incident_data(component_id: u32, impact: u8, timestamp: i64) -> Inc
 
     IncidentData {
         title: "System incident from monitoring system".to_string(),
-        description: "System-wide incident affecting one or multiple components. Created automatically.".to_string(),
+        description:
+            "System-wide incident affecting one or multiple components. Created automatically."
+                .to_string(),
         impact,
         components: vec![component_id],
         start_date,

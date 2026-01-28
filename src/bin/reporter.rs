@@ -6,11 +6,11 @@
 
 extern crate anyhow;
 
-use cloudmon_metrics::{api::v1::ServiceHealthResponse, config::Config};
 use cloudmon_metrics::sd::{
     build_auth_headers, build_component_id_cache, build_incident_data, create_incident,
     fetch_components, find_component_id, Component, ComponentAttribute,
 };
+use cloudmon_metrics::{api::v1::ServiceHealthResponse, config::Config};
 
 use reqwest::ClientBuilder;
 
@@ -23,7 +23,6 @@ use std::collections::HashMap;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-
 /// Component status for V1 API (legacy, will be replaced)
 #[derive(Deserialize, Serialize, Debug)]
 pub struct ComponentStatus {
@@ -31,7 +30,6 @@ pub struct ComponentStatus {
     pub impact: u8,
     pub attributes: Vec<ComponentAttribute>,
 }
-
 
 #[tokio::main]
 async fn main() {
@@ -222,7 +220,8 @@ async fn metric_watcher(config: &Config) {
                                                 .unwrap();
 
                                             // T017: Find component ID in cache (cache miss detection)
-                                            let mut component_id = find_component_id(&component_cache, comp);
+                                            let mut component_id =
+                                                find_component_id(&component_cache, comp);
 
                                             // T018: If component not found, refresh cache once per FR-005
                                             if component_id.is_none() {
@@ -233,12 +232,25 @@ async fn metric_watcher(config: &Config) {
                                                     "Component not found in cache, attempting cache refresh"
                                                 );
 
-                                                match fetch_components(&req_client, &sdb_config.url, &headers).await {
+                                                match fetch_components(
+                                                    &req_client,
+                                                    &sdb_config.url,
+                                                    &headers,
+                                                )
+                                                .await
+                                                {
                                                     Ok(components) => {
-                                                        tracing::info!("Cache refreshed with {} components", components.len());
-                                                        component_cache = build_component_id_cache(components);
+                                                        tracing::info!(
+                                                            "Cache refreshed with {} components",
+                                                            components.len()
+                                                        );
+                                                        component_cache =
+                                                            build_component_id_cache(components);
                                                         // Retry lookup after refresh
-                                                        component_id = find_component_id(&component_cache, comp);
+                                                        component_id = find_component_id(
+                                                            &component_cache,
+                                                            comp,
+                                                        );
                                                     }
                                                     Err(e) => {
                                                         tracing::warn!(
@@ -277,7 +289,9 @@ async fn metric_watcher(config: &Config) {
                                                         &sdb_config.url,
                                                         &headers,
                                                         &incident_data,
-                                                    ).await {
+                                                    )
+                                                    .await
+                                                    {
                                                         Ok(_) => {
                                                             tracing::info!(
                                                                 component_id = id,

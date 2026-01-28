@@ -3,12 +3,12 @@
 //! Tests for Phase 7: Integration Testing
 //! T028-T037: Validate end-to-end Status Dashboard API integration with mocked endpoints
 
+use chrono::DateTime;
 use cloudmon_metrics::sd::{
     build_auth_headers, build_component_id_cache, build_incident_data, create_incident,
     fetch_components, find_component_id, Component, ComponentAttribute, IncidentData,
     StatusDashboardComponent,
 };
-use chrono::DateTime;
 
 /// T029: Test fetch_components_success - verify component fetching and parsing
 #[tokio::test]
@@ -119,26 +119,24 @@ fn test_build_component_id_cache() {
 #[test]
 fn test_find_component_id_subset_matching() {
     // Build cache with components that have multiple attributes
-    let components = vec![
-        StatusDashboardComponent {
-            id: 218,
-            name: "Object Storage Service".to_string(),
-            attributes: vec![
-                ComponentAttribute {
-                    name: "category".to_string(),
-                    value: "Storage".to_string(),
-                },
-                ComponentAttribute {
-                    name: "region".to_string(),
-                    value: "EU-DE".to_string(),
-                },
-                ComponentAttribute {
-                    name: "type".to_string(),
-                    value: "block".to_string(),
-                },
-            ],
-        },
-    ];
+    let components = vec![StatusDashboardComponent {
+        id: 218,
+        name: "Object Storage Service".to_string(),
+        attributes: vec![
+            ComponentAttribute {
+                name: "category".to_string(),
+                value: "Storage".to_string(),
+            },
+            ComponentAttribute {
+                name: "region".to_string(),
+                value: "EU-DE".to_string(),
+            },
+            ComponentAttribute {
+                name: "type".to_string(),
+                value: "block".to_string(),
+            },
+        ],
+    }];
 
     let cache = build_component_id_cache(components);
 
@@ -165,24 +163,20 @@ fn test_find_component_id_subset_matching() {
     // Test 2: Subset match (config has fewer attributes than cache) - FR-012
     let target_subset = Component {
         name: "Object Storage Service".to_string(),
-        attributes: vec![
-            ComponentAttribute {
-                name: "region".to_string(),
-                value: "EU-DE".to_string(),
-            },
-        ],
+        attributes: vec![ComponentAttribute {
+            name: "region".to_string(),
+            value: "EU-DE".to_string(),
+        }],
     };
     assert_eq!(find_component_id(&cache, &target_subset), Some(218));
 
     // Test 3: No match (different attribute value)
     let target_no_match = Component {
         name: "Object Storage Service".to_string(),
-        attributes: vec![
-            ComponentAttribute {
-                name: "region".to_string(),
-                value: "EU-NL".to_string(),
-            },
-        ],
+        attributes: vec![ComponentAttribute {
+            name: "region".to_string(),
+            value: "EU-NL".to_string(),
+        }],
     };
     assert_eq!(find_component_id(&cache, &target_no_match), None);
 
@@ -233,16 +227,11 @@ fn test_timestamp_rfc3339_minus_one_second() {
     let expected_timestamp = timestamp - 1; // FR-011: subtract 1 second
     let expected_dt = DateTime::from_timestamp(expected_timestamp, 0).unwrap();
 
-    assert_eq!(
-        parsed.unwrap().timestamp(),
-        expected_dt.timestamp()
-    );
+    assert_eq!(parsed.unwrap().timestamp(), expected_dt.timestamp());
 
     // Verify the format is RFC3339 (contains 'T' and 'Z' or offset)
     assert!(incident_data.start_date.contains('T'));
-    assert!(
-        incident_data.start_date.ends_with('Z') || incident_data.start_date.contains('+')
-    );
+    assert!(incident_data.start_date.ends_with('Z') || incident_data.start_date.contains('+'));
 }
 
 /// T034: Test create_incident_success - verify POST /v2/incidents with mockito
@@ -294,13 +283,11 @@ async fn test_create_incident_success() {
 #[test]
 fn test_cache_refresh_logic() {
     // Test scenario: component not found initially, would trigger refresh
-    let initial_cache = build_component_id_cache(vec![
-        StatusDashboardComponent {
-            id: 218,
-            name: "Service A".to_string(),
-            attributes: vec![],
-        },
-    ]);
+    let initial_cache = build_component_id_cache(vec![StatusDashboardComponent {
+        id: 218,
+        name: "Service A".to_string(),
+        attributes: vec![],
+    }]);
 
     let target = Component {
         name: "Service B".to_string(),
@@ -399,12 +386,10 @@ fn test_diagnostic_data_availability() {
     // Verify all required fields for structured logging are accessible
     let component = Component {
         name: "Test Service".to_string(),
-        attributes: vec![
-            ComponentAttribute {
-                name: "region".to_string(),
-                value: "EU-DE".to_string(),
-            },
-        ],
+        attributes: vec![ComponentAttribute {
+            name: "region".to_string(),
+            value: "EU-DE".to_string(),
+        }],
     };
 
     let incident_data = build_incident_data(218, 2, 1705929045);
@@ -425,13 +410,11 @@ fn test_diagnostic_data_availability() {
 /// Additional test: Verify empty attributes work correctly
 #[test]
 fn test_empty_attributes_handling() {
-    let components = vec![
-        StatusDashboardComponent {
-            id: 100,
-            name: "Service Without Attributes".to_string(),
-            attributes: vec![],
-        },
-    ];
+    let components = vec![StatusDashboardComponent {
+        id: 100,
+        name: "Service Without Attributes".to_string(),
+        attributes: vec![],
+    }];
 
     let cache = build_component_id_cache(components);
 
@@ -450,22 +433,18 @@ fn test_multiple_components_same_name() {
         StatusDashboardComponent {
             id: 100,
             name: "Storage Service".to_string(),
-            attributes: vec![
-                ComponentAttribute {
-                    name: "region".to_string(),
-                    value: "EU-DE".to_string(),
-                },
-            ],
+            attributes: vec![ComponentAttribute {
+                name: "region".to_string(),
+                value: "EU-DE".to_string(),
+            }],
         },
         StatusDashboardComponent {
             id: 200,
             name: "Storage Service".to_string(),
-            attributes: vec![
-                ComponentAttribute {
-                    name: "region".to_string(),
-                    value: "EU-NL".to_string(),
-                },
-            ],
+            attributes: vec![ComponentAttribute {
+                name: "region".to_string(),
+                value: "EU-NL".to_string(),
+            }],
         },
     ];
 
@@ -473,22 +452,18 @@ fn test_multiple_components_same_name() {
 
     let target_de = Component {
         name: "Storage Service".to_string(),
-        attributes: vec![
-            ComponentAttribute {
-                name: "region".to_string(),
-                value: "EU-DE".to_string(),
-            },
-        ],
+        attributes: vec![ComponentAttribute {
+            name: "region".to_string(),
+            value: "EU-DE".to_string(),
+        }],
     };
 
     let target_nl = Component {
         name: "Storage Service".to_string(),
-        attributes: vec![
-            ComponentAttribute {
-                name: "region".to_string(),
-                value: "EU-NL".to_string(),
-            },
-        ],
+        attributes: vec![ComponentAttribute {
+            name: "region".to_string(),
+            value: "EU-NL".to_string(),
+        }],
     };
 
     assert_eq!(find_component_id(&cache, &target_de), Some(100));
@@ -510,4 +485,3 @@ fn test_build_auth_headers() {
     let headers_empty = build_auth_headers(None);
     assert!(!headers_empty.contains_key(reqwest::header::AUTHORIZATION));
 }
-

@@ -394,14 +394,29 @@ mod test {
         // Verify metric exists for all three environments
         let metric_key = "api.error-count";
         assert!(state.flag_metrics.contains_key(metric_key));
-        
-        let dev_metric = state.flag_metrics.get(metric_key).unwrap().get("dev").unwrap();
+
+        let dev_metric = state
+            .flag_metrics
+            .get(metric_key)
+            .unwrap()
+            .get("dev")
+            .unwrap();
         assert_eq!("dev.api.errors", dev_metric.query);
-        
-        let staging_metric = state.flag_metrics.get(metric_key).unwrap().get("staging").unwrap();
+
+        let staging_metric = state
+            .flag_metrics
+            .get(metric_key)
+            .unwrap()
+            .get("staging")
+            .unwrap();
         assert_eq!("staging.api.errors", staging_metric.query);
-        
-        let prod_metric = state.flag_metrics.get(metric_key).unwrap().get("production").unwrap();
+
+        let prod_metric = state
+            .flag_metrics
+            .get(metric_key)
+            .unwrap()
+            .get("production")
+            .unwrap();
         assert_eq!("production.api.errors", prod_metric.query);
     }
 
@@ -445,7 +460,7 @@ mod test {
             .get("dev")
             .unwrap();
         assert_eq!(5000.0, dev_metric.threshold);
-        
+
         // Verify production has override threshold of 500
         let prod_metric = state
             .flag_metrics
@@ -578,53 +593,53 @@ mod test {
     }
 }
 
-    /// Additional coverage test: Test CloudMonError Display implementation
-    #[test]
-    fn test_error_display() {
-        assert_eq!(
-            format!("{}", CloudMonError::ServiceNotSupported),
-            "Requested service not supported"
-        );
-        assert_eq!(
-            format!("{}", CloudMonError::EnvNotSupported),
-            "Environment for service not supported"
-        );
-        assert_eq!(
-            format!("{}", CloudMonError::ExpressionError),
-            "Internal Expression evaluation error"
-        );
-        assert_eq!(
-            format!("{}", CloudMonError::GraphiteError),
-            "Graphite error"
-        );
-    }
+/// Additional coverage test: Test CloudMonError Display implementation
+#[test]
+fn test_error_display() {
+    assert_eq!(
+        format!("{}", CloudMonError::ServiceNotSupported),
+        "Requested service not supported"
+    );
+    assert_eq!(
+        format!("{}", CloudMonError::EnvNotSupported),
+        "Environment for service not supported"
+    );
+    assert_eq!(
+        format!("{}", CloudMonError::ExpressionError),
+        "Internal Expression evaluation error"
+    );
+    assert_eq!(
+        format!("{}", CloudMonError::GraphiteError),
+        "Graphite error"
+    );
+}
 
-    /// Additional coverage test: Test CloudMonError Debug implementation
-    #[test]
-    fn test_error_debug() {
-        assert_eq!(
-            format!("{:?}", CloudMonError::ServiceNotSupported),
-            "Requested service not supported"
-        );
-        assert_eq!(
-            format!("{:?}", CloudMonError::EnvNotSupported),
-            "Environment for service not supported"
-        );
-        assert_eq!(
-            format!("{:?}", CloudMonError::ExpressionError),
-            "Internal Expression evaluation error"
-        );
-        assert_eq!(
-            format!("{:?}", CloudMonError::GraphiteError),
-            "Graphite error"
-        );
-    }
+/// Additional coverage test: Test CloudMonError Debug implementation
+#[test]
+fn test_error_debug() {
+    assert_eq!(
+        format!("{:?}", CloudMonError::ServiceNotSupported),
+        "Requested service not supported"
+    );
+    assert_eq!(
+        format!("{:?}", CloudMonError::EnvNotSupported),
+        "Environment for service not supported"
+    );
+    assert_eq!(
+        format!("{:?}", CloudMonError::ExpressionError),
+        "Internal Expression evaluation error"
+    );
+    assert_eq!(
+        format!("{:?}", CloudMonError::GraphiteError),
+        "Graphite error"
+    );
+}
 
-    /// Additional coverage test: Test BinaryMetricRawDef Default
-    #[test]
-    fn test_binary_metric_raw_def_default() {
-        let default = BinaryMetricRawDef::default();
-        assert_eq!(default.query, String::new());
-        assert_eq!(default.op, CmpType::Lt);
-        assert_eq!(default.threshold, 0.0);
-    }
+/// Additional coverage test: Test BinaryMetricRawDef Default
+#[test]
+fn test_binary_metric_raw_def_default() {
+    let default = BinaryMetricRawDef::default();
+    assert_eq!(default.query, String::new());
+    assert_eq!(default.op, CmpType::Lt);
+    assert_eq!(default.threshold, 0.0);
+}

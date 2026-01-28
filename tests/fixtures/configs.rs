@@ -5,7 +5,8 @@
 
 /// Empty health metrics configuration for error testing
 pub fn empty_health_config(graphite_url: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
 datasource:
   url: '{}'
 server:
@@ -19,12 +20,15 @@ health_metrics:
     category: compute
     metrics: []
     expressions: []
-"#, graphite_url)
+"#,
+        graphite_url
+    )
 }
 
 /// Configuration with known service for error testing
 pub fn error_test_config(graphite_url: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
 datasource:
   url: '{}'
 server:
@@ -52,5 +56,7 @@ health_metrics:
     expressions:
       - expression: 'webapp.metric1'
         weight: 1
-"#, graphite_url)
+"#,
+        graphite_url
+    )
 }

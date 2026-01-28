@@ -157,7 +157,9 @@ pub async fn get_service_health(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CmpType, FlagMetric, EnvironmentDef, MetricExpressionDef, ServiceHealthDef};
+    use crate::types::{
+        CmpType, EnvironmentDef, FlagMetric, MetricExpressionDef, ServiceHealthDef,
+    };
 
     // Helper function to create a test metric
     fn create_test_metric(op: CmpType, threshold: f32) -> FlagMetric {
@@ -181,16 +183,22 @@ mod tests {
     #[test]
     fn test_lt_operator_above_or_equal_threshold() {
         let metric = create_test_metric(CmpType::Lt, 10.0);
-        
+
         // Test equal
         let value = Some(10.0);
         let result = get_metric_flag_state(&value, &metric);
-        assert_eq!(result, false, "Lt operator: 10.0 < 10.0 should return false");
-        
+        assert_eq!(
+            result, false,
+            "Lt operator: 10.0 < 10.0 should return false"
+        );
+
         // Test above
         let value = Some(15.0);
         let result = get_metric_flag_state(&value, &metric);
-        assert_eq!(result, false, "Lt operator: 15.0 < 10.0 should return false");
+        assert_eq!(
+            result, false,
+            "Lt operator: 15.0 < 10.0 should return false"
+        );
     }
 
     // T012: Test Gt operator with value > threshold returns true
@@ -206,12 +214,15 @@ mod tests {
     #[test]
     fn test_gt_operator_below_or_equal_threshold() {
         let metric = create_test_metric(CmpType::Gt, 10.0);
-        
+
         // Test equal
         let value = Some(10.0);
         let result = get_metric_flag_state(&value, &metric);
-        assert_eq!(result, false, "Gt operator: 10.0 > 10.0 should return false");
-        
+        assert_eq!(
+            result, false,
+            "Gt operator: 10.0 > 10.0 should return false"
+        );
+
         // Test below
         let value = Some(5.0);
         let result = get_metric_flag_state(&value, &metric);
@@ -231,44 +242,59 @@ mod tests {
     #[test]
     fn test_eq_operator_not_equal_threshold() {
         let metric = create_test_metric(CmpType::Eq, 10.0);
-        
+
         // Test below
         let value = Some(5.0);
         let result = get_metric_flag_state(&value, &metric);
-        assert_eq!(result, false, "Eq operator: 5.0 == 10.0 should return false");
-        
+        assert_eq!(
+            result, false,
+            "Eq operator: 5.0 == 10.0 should return false"
+        );
+
         // Test above
         let value = Some(15.0);
         let result = get_metric_flag_state(&value, &metric);
-        assert_eq!(result, false, "Eq operator: 15.0 == 10.0 should return false");
+        assert_eq!(
+            result, false,
+            "Eq operator: 15.0 == 10.0 should return false"
+        );
     }
 
     // T016: Test None value always returns false for all operators
     #[test]
     fn test_none_value_returns_false() {
         let value = None;
-        
+
         // Test with Lt operator
         let metric = create_test_metric(CmpType::Lt, 10.0);
         let result = get_metric_flag_state(&value, &metric);
-        assert_eq!(result, false, "Lt operator with None value should return false");
-        
+        assert_eq!(
+            result, false,
+            "Lt operator with None value should return false"
+        );
+
         // Test with Gt operator
         let metric = create_test_metric(CmpType::Gt, 10.0);
         let result = get_metric_flag_state(&value, &metric);
-        assert_eq!(result, false, "Gt operator with None value should return false");
-        
+        assert_eq!(
+            result, false,
+            "Gt operator with None value should return false"
+        );
+
         // Test with Eq operator
         let metric = create_test_metric(CmpType::Eq, 10.0);
         let result = get_metric_flag_state(&value, &metric);
-        assert_eq!(result, false, "Eq operator with None value should return false");
+        assert_eq!(
+            result, false,
+            "Eq operator with None value should return false"
+        );
     }
 
     // T017: Test boundary conditions (threshold ± 0.001)
     #[test]
     fn test_boundary_conditions() {
         let threshold = 10.0;
-        
+
         // Lt operator with boundaries
         let metric = create_test_metric(CmpType::Lt, threshold);
         let value_below = Some(threshold - 0.001);
@@ -277,14 +303,14 @@ mod tests {
             true,
             "Lt operator: value just below threshold should return true"
         );
-        
+
         let value_above = Some(threshold + 0.001);
         assert_eq!(
             get_metric_flag_state(&value_above, &metric),
             false,
             "Lt operator: value just above threshold should return false"
         );
-        
+
         // Gt operator with boundaries
         let metric = create_test_metric(CmpType::Gt, threshold);
         let value_above = Some(threshold + 0.001);
@@ -293,7 +319,7 @@ mod tests {
             true,
             "Gt operator: value just above threshold should return true"
         );
-        
+
         let value_below = Some(threshold - 0.001);
         assert_eq!(
             get_metric_flag_state(&value_below, &metric),
@@ -322,7 +348,7 @@ mod tests {
             false,
             "Lt: 0.0 < -5.0 should return false"
         );
-        
+
         // Gt operator with negative values
         let metric = create_test_metric(CmpType::Gt, -5.0);
         assert_eq!(
@@ -340,7 +366,7 @@ mod tests {
             false,
             "Gt: -10.0 > -5.0 should return false"
         );
-        
+
         // Eq operator with negative values
         let metric = create_test_metric(CmpType::Eq, -5.0);
         assert_eq!(
@@ -359,7 +385,7 @@ mod tests {
     #[test]
     fn test_zero_threshold() {
         let threshold = 0.0;
-        
+
         // Lt operator with zero threshold
         let metric = create_test_metric(CmpType::Lt, threshold);
         assert_eq!(
@@ -377,7 +403,7 @@ mod tests {
             false,
             "Lt: 1.0 < 0.0 should return false"
         );
-        
+
         // Gt operator with zero threshold
         let metric = create_test_metric(CmpType::Gt, threshold);
         assert_eq!(
@@ -395,7 +421,7 @@ mod tests {
             false,
             "Gt: -1.0 > 0.0 should return false"
         );
-        
+
         // Eq operator with zero threshold
         let metric = create_test_metric(CmpType::Eq, threshold);
         assert_eq!(
@@ -417,7 +443,7 @@ mod tests {
         let lt_metric = create_test_metric(CmpType::Lt, 50.0);
         let gt_metric = create_test_metric(CmpType::Gt, 10.0);
         let eq_metric = create_test_metric(CmpType::Eq, 42.0);
-        
+
         // Test value that satisfies Lt condition
         let value = Some(30.0);
         assert_eq!(
@@ -435,7 +461,7 @@ mod tests {
             false,
             "30.0 == 42.0 should be false"
         );
-        
+
         // Test value that satisfies Eq condition
         let value = Some(42.0);
         assert_eq!(
@@ -453,7 +479,7 @@ mod tests {
             true,
             "42.0 == 42.0 should be true"
         );
-        
+
         // Test value that fails all conditions
         let value = Some(5.0);
         assert_eq!(
@@ -482,7 +508,7 @@ mod tests {
         graphite_url: &str,
     ) -> AppState {
         use crate::config::{Config, Datasource, ServerConf};
-        
+
         let config = Config {
             datasource: Datasource {
                 url: graphite_url.to_string(),
@@ -503,7 +529,7 @@ mod tests {
         };
 
         let mut state = AppState::new(config);
-        
+
         // Setup flag metrics and collect metric names
         let mut metric_names = Vec::new();
         for (name, op, threshold) in metrics {
@@ -520,7 +546,7 @@ mod tests {
             );
             state.flag_metrics.insert(metric_key, env_map);
         }
-        
+
         // Setup health metrics
         let expression_defs: Vec<MetricExpressionDef> = expressions
             .into_iter()
@@ -529,7 +555,7 @@ mod tests {
                 weight,
             })
             .collect();
-        
+
         state.health_metrics.insert(
             service.to_string(),
             ServiceHealthDef {
@@ -540,7 +566,7 @@ mod tests {
                 expressions: expression_defs,
             },
         );
-        
+
         state.services.insert(service.to_string());
         state
     }
@@ -549,10 +575,10 @@ mod tests {
     #[tokio::test]
     async fn test_single_metric_or_expression() {
         use mockito;
-        
+
         let mut server = mockito::Server::new_async().await;
         let mock_url = server.url();
-        
+
         // Setup: single metric "error_rate" with Lt 5.0
         let state = create_health_test_state(
             "test-service",
@@ -561,18 +587,19 @@ mod tests {
             vec![("test_service.error_rate", 100)], // Weight 100 if error_rate flag is true
             &mock_url,
         );
-        
+
         // Mock Graphite response: error_rate = 2.0 (< 5.0, so flag = true)
         let _mock = server
             .mock("GET", "/render")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-            ]))
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "format".into(),
+                "json".into(),
+            )]))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"[{"target":"test-service.error_rate","datapoints":[[2.0,1234567890]]}]"#)
             .create();
-        
+
         let result = get_service_health(
             &state,
             "test-service",
@@ -582,24 +609,31 @@ mod tests {
             100,
         )
         .await;
-        
+
         if let Err(ref e) = result {
             eprintln!("Error from get_service_health: {:?}", e);
         }
-        assert!(result.is_ok(), "Single metric OR expression should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Single metric OR expression should succeed: {:?}",
+            result
+        );
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
-        assert_eq!(health_data[0].1, 100, "Expression weight 100 should be returned when flag is true");
+        assert_eq!(
+            health_data[0].1, 100,
+            "Expression weight 100 should be returned when flag is true"
+        );
     }
 
     // T027: Test two metrics AND expression (both true)
     #[tokio::test]
     async fn test_two_metrics_and_both_true() {
         use mockito;
-        
+
         let mut server = mockito::Server::new_async().await;
         let mock_url = server.url();
-        
+
         // Setup: two metrics with AND expression
         let state = create_health_test_state(
             "test-service",
@@ -611,13 +645,14 @@ mod tests {
             vec![("test_service.error_rate && test_service.response_time", 100)],
             &mock_url,
         );
-        
+
         // Mock Graphite response: both metrics satisfy thresholds
         let _mock = server
             .mock("GET", "/render")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-            ]))
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "format".into(),
+                "json".into(),
+            )]))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -627,7 +662,7 @@ mod tests {
                 ]"#,
             )
             .create();
-        
+
         let result = get_service_health(
             &state,
             "test-service",
@@ -637,8 +672,12 @@ mod tests {
             100,
         )
         .await;
-        
-        assert!(result.is_ok(), "Two metrics AND expression (both true) should succeed: {:?}", result);
+
+        assert!(
+            result.is_ok(),
+            "Two metrics AND expression (both true) should succeed: {:?}",
+            result
+        );
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
         assert_eq!(
@@ -651,10 +690,10 @@ mod tests {
     #[tokio::test]
     async fn test_two_metrics_and_one_false() {
         use mockito;
-        
+
         let mut server = mockito::Server::new_async().await;
         let mock_url = server.url();
-        
+
         // Setup: two metrics with AND expression
         let state = create_health_test_state(
             "test-service",
@@ -666,13 +705,14 @@ mod tests {
             vec![("test_service.error_rate && test_service.response_time", 100)],
             &mock_url,
         );
-        
+
         // Mock Graphite response: error_rate OK but response_time too high
         let _mock = server
             .mock("GET", "/render")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-            ]))
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "format".into(),
+                "json".into(),
+            )]))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -682,7 +722,7 @@ mod tests {
                 ]"#,
             )
             .create();
-        
+
         let result = get_service_health(
             &state,
             "test-service",
@@ -692,8 +732,11 @@ mod tests {
             100,
         )
         .await;
-        
-        assert!(result.is_ok(), "Two metrics AND expression (one false) should succeed");
+
+        assert!(
+            result.is_ok(),
+            "Two metrics AND expression (one false) should succeed"
+        );
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
         assert_eq!(
@@ -706,10 +749,10 @@ mod tests {
     #[tokio::test]
     async fn test_weighted_expressions_highest_weight() {
         use mockito;
-        
+
         let mut server = mockito::Server::new_async().await;
         let mock_url = server.url();
-        
+
         // Setup: multiple expressions with different weights
         let state = create_health_test_state(
             "test-service",
@@ -719,19 +762,20 @@ mod tests {
                 ("response_time", CmpType::Lt, 100.0),
             ],
             vec![
-                ("test_service.error_rate", 50),     // Weight 50 if only error_rate
-                ("test_service.response_time", 30),  // Weight 30 if only response_time
+                ("test_service.error_rate", 50),    // Weight 50 if only error_rate
+                ("test_service.response_time", 30), // Weight 30 if only response_time
                 ("test_service.error_rate && test_service.response_time", 100), // Weight 100 if both
             ],
             &mock_url,
         );
-        
+
         // Mock Graphite response: both flags are true
         let _mock = server
             .mock("GET", "/render")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-            ]))
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "format".into(),
+                "json".into(),
+            )]))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -741,7 +785,7 @@ mod tests {
                 ]"#,
             )
             .create();
-        
+
         let result = get_service_health(
             &state,
             "test-service",
@@ -751,7 +795,7 @@ mod tests {
             100,
         )
         .await;
-        
+
         assert!(result.is_ok(), "Weighted expressions should succeed");
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
@@ -765,10 +809,10 @@ mod tests {
     #[tokio::test]
     async fn test_all_false_expressions_return_zero() {
         use mockito;
-        
+
         let mut server = mockito::Server::new_async().await;
         let mock_url = server.url();
-        
+
         // Setup: expressions that require flags to be true
         let state = create_health_test_state(
             "test-service",
@@ -777,18 +821,17 @@ mod tests {
                 ("error_rate", CmpType::Lt, 5.0),
                 ("response_time", CmpType::Lt, 100.0),
             ],
-            vec![
-                ("test_service.error_rate && test_service.response_time", 100),
-            ],
+            vec![("test_service.error_rate && test_service.response_time", 100)],
             &mock_url,
         );
-        
+
         // Mock Graphite response: both flags are false
         let _mock = server
             .mock("GET", "/render")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-            ]))
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "format".into(),
+                "json".into(),
+            )]))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -798,7 +841,7 @@ mod tests {
                 ]"#,
             )
             .create();
-        
+
         let result = get_service_health(
             &state,
             "test-service",
@@ -808,7 +851,7 @@ mod tests {
             100,
         )
         .await;
-        
+
         assert!(result.is_ok(), "All false expressions should succeed");
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
@@ -822,10 +865,10 @@ mod tests {
     #[tokio::test]
     async fn test_unknown_service_error() {
         use mockito;
-        
+
         let server = mockito::Server::new_async().await;
         let mock_url = server.url();
-        
+
         let state = create_health_test_state(
             "test-service",
             "production",
@@ -833,7 +876,7 @@ mod tests {
             vec![("test_service.error_rate", 100)],
             &mock_url,
         );
-        
+
         let result = get_service_health(
             &state,
             "unknown-service", // Request a service that doesn't exist
@@ -843,7 +886,7 @@ mod tests {
             100,
         )
         .await;
-        
+
         assert!(result.is_err(), "Unknown service should return error");
         match result.unwrap_err() {
             CloudMonError::ServiceNotSupported => {
@@ -857,10 +900,10 @@ mod tests {
     #[tokio::test]
     async fn test_unknown_environment_error() {
         use mockito;
-        
+
         let server = mockito::Server::new_async().await;
         let mock_url = server.url();
-        
+
         let state = create_health_test_state(
             "test-service",
             "production",
@@ -868,7 +911,7 @@ mod tests {
             vec![("test_service.error_rate", 100)],
             &mock_url,
         );
-        
+
         let result = get_service_health(
             &state,
             "test-service",
@@ -878,7 +921,7 @@ mod tests {
             100,
         )
         .await;
-        
+
         assert!(result.is_err(), "Unknown environment should return error");
         match result.unwrap_err() {
             CloudMonError::EnvNotSupported => {
@@ -892,10 +935,10 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_datapoints_time_series() {
         use mockito;
-        
+
         let mut server = mockito::Server::new_async().await;
         let mock_url = server.url();
-        
+
         let state = create_health_test_state(
             "test-service",
             "production",
@@ -903,13 +946,14 @@ mod tests {
             vec![("test_service.error_rate", 100)],
             &mock_url,
         );
-        
+
         // Mock Graphite response: multiple datapoints over time
         let _mock = server
             .mock("GET", "/render")
-            .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("format".into(), "json".into()),
-            ]))
+            .match_query(mockito::Matcher::AllOf(vec![mockito::Matcher::UrlEncoded(
+                "format".into(),
+                "json".into(),
+            )]))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -924,7 +968,7 @@ mod tests {
                 }]"#,
             )
             .create();
-        
+
         let result = get_service_health(
             &state,
             "test-service",
@@ -934,7 +978,7 @@ mod tests {
             100,
         )
         .await;
-        
+
         assert!(result.is_ok(), "Multiple datapoints should succeed");
         let health_data = result.unwrap();
         assert_eq!(
@@ -942,14 +986,10 @@ mod tests {
             4,
             "Should have four datapoints (one per timestamp)"
         );
-        
+
         // All values are < 5.0, so all should have weight 100
         for (i, (_, weight)) in health_data.iter().enumerate() {
-            assert_eq!(
-                *weight, 100,
-                "Datapoint {} should have weight 100",
-                i
-            );
+            assert_eq!(*weight, 100, "Datapoint {} should have weight 100", i);
         }
     }
 
@@ -960,22 +1000,26 @@ mod tests {
         use mockito::Matcher;
 
         let mut server = mockito::Server::new();
-        
+
         // Mock Graphite to return valid data
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::json!([
-                {
-                    "target": "svc1.metric1",
-                    "datapoints": [[15.0, 1609459200]]
-                }
-            ]).to_string())
+            .with_body(
+                serde_json::json!([
+                    {
+                        "target": "svc1.metric1",
+                        "datapoints": [[15.0, 1609459200]]
+                    }
+                ])
+                .to_string(),
+            )
             .create();
 
-        let config_str = format!("
+        let config_str = format!(
+            "
         datasource:
           url: '{}'
         server:
@@ -1003,24 +1047,21 @@ mod tests {
             expressions:
               - expression: 'invalid syntax &&& broken'
                 weight: 1
-        ", server.url());
+        ",
+            server.url()
+        );
 
         let config = crate::config::Config::from_config_str(&config_str);
         let mut state = crate::types::AppState::new(config);
         state.process_config();
 
         // Call get_service_health with invalid expression
-        let result = get_service_health(
-            &state,
-            "svc1",
-            "prod",
-            "now-1h",
-            "now",
-            10
-        ).await;
+        let result = get_service_health(&state, "svc1", "prod", "now-1h", "now", 10).await;
 
         // Should return ExpressionError
-        assert!(result.is_err(), "Should return error for invalid expression");
+        assert!(
+            result.is_err(),
+            "Should return error for invalid expression"
+        );
     }
 }
-
