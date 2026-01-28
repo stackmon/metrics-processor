@@ -6,4 +6,5 @@ pub mod api;
 pub mod common;
 pub mod config;
 pub mod graphite;
+pub mod sd;
 pub mod types;

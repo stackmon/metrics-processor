@@ -7,40 +7,22 @@
 extern crate anyhow;
 
 use cloudmon_metrics::{api::v1::ServiceHealthResponse, config::Config};
-
-use reqwest::{
-    header::{HeaderMap, AUTHORIZATION},
-    ClientBuilder,
+use cloudmon_metrics::sd::{
+    build_auth_headers, build_component_id_cache, build_incident_data, create_incident,
+    fetch_components, find_component_id, Component, ComponentAttribute,
 };
+
+use reqwest::ClientBuilder;
 
 use tokio::signal;
 use tokio::time::{sleep, Duration};
 
 use serde::{Deserialize, Serialize};
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use hmac::{Hmac, Mac};
-use jwt::SignWithKey;
-use sha2::Sha256;
-
-use chrono;
-
-/// Component attribute (key-value pair) for identifying components
-#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct ComponentAttribute {
-    pub name: String,
-    pub value: String,
-}
-
-/// Component definition from configuration
-#[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct Component {
-    pub name: String,
-    pub attributes: Vec<ComponentAttribute>,
-}
 
 /// Component status for V1 API (legacy, will be replaced)
 #[derive(Deserialize, Serialize, Debug)]
@@ -50,129 +32,6 @@ pub struct ComponentStatus {
     pub attributes: Vec<ComponentAttribute>,
 }
 
-/// Component data from Status Dashboard API V2 GET /v2/components response
-#[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct StatusDashboardComponent {
-    pub id: u32,
-    pub name: String,
-    #[serde(default)]
-    pub attributes: Vec<ComponentAttribute>,
-}
-
-/// Incident data for Status Dashboard API V2 POST /v2/incidents request
-#[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct IncidentData {
-    pub title: String,
-    pub description: String,
-    pub impact: u8,
-    pub components: Vec<u32>,
-    pub start_date: String,
-    pub system: bool,
-    #[serde(rename = "type")]
-    pub incident_type: String,
-}
-
-/// Component ID cache: maps (component_name, sorted_attributes) to component_id
-type ComponentCache = HashMap<(String, Vec<ComponentAttribute>), u32>;
-
-/// Fetch all components from Status Dashboard API V2
-async fn fetch_components(
-    client: &reqwest::Client,
-    base_url: &str,
-    headers: &HeaderMap,
-) -> anyhow::Result<Vec<StatusDashboardComponent>> {
-    let url = format!("{}/v2/components", base_url);
-    let response = client
-        .get(&url)
-        .headers(headers.clone())
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "Failed to fetch components: status={}, body={:?}",
-            response.status(),
-            response.text().await
-        );
-    }
-
-    let components: Vec<StatusDashboardComponent> = response.json().await?;
-    Ok(components)
-}
-
-/// Build component ID cache from fetched components
-fn build_component_id_cache(components: Vec<StatusDashboardComponent>) -> ComponentCache {
-    components
-        .into_iter()
-        .map(|c| {
-            let mut attrs = c.attributes;
-            attrs.sort(); // Ensure deterministic key
-            ((c.name, attrs), c.id)
-        })
-        .collect()
-}
-
-/// Find component ID in cache with subset attribute matching
-/// Returns the component ID if found, None otherwise
-fn find_component_id(cache: &ComponentCache, target: &Component) -> Option<u32> {
-    cache
-        .iter()
-        .filter(|((name, _attrs), _id)| name == &target.name)
-        .find(|((_name, cache_attrs), _id)| {
-            // Config attrs must be subset of cache attrs
-            target.attributes.iter().all(|target_attr| {
-                cache_attrs.iter().any(|cache_attr| {
-                    cache_attr.name == target_attr.name && cache_attr.value == target_attr.value
-                })
-            })
-        })
-        .map(|((_name, _attrs), id)| *id)
-}
-
-/// Build incident data structure for V2 API
-/// timestamp: metric timestamp in seconds since epoch
-fn build_incident_data(component_id: u32, impact: u8, timestamp: i64) -> IncidentData {
-    // Convert timestamp to RFC3339 and subtract 1 second per FR-011
-    let start_date = chrono::DateTime::from_timestamp(timestamp - 1, 0)
-        .expect("Invalid timestamp")
-        .to_rfc3339();
-
-    IncidentData {
-        title: "System incident from monitoring system".to_string(),
-        description: "System-wide incident affecting one or multiple components. Created automatically.".to_string(),
-        impact,
-        components: vec![component_id],
-        start_date,
-        system: true,
-        incident_type: "incident".to_string(),
-    }
-}
-
-/// Create incident via Status Dashboard API V2
-async fn create_incident(
-    client: &reqwest::Client,
-    base_url: &str,
-    headers: &HeaderMap,
-    incident_data: &IncidentData,
-) -> anyhow::Result<()> {
-    let url = format!("{}/v2/incidents", base_url);
-    let response = client
-        .post(&url)
-        .headers(headers.clone())
-        .json(incident_data)
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "Failed to create incident: status={}, body={:?}",
-            response.status(),
-            response.text().await
-        );
-    }
-
-    Ok(())
-}
 
 #[tokio::main]
 async fn main() {
@@ -260,21 +119,9 @@ async fn metric_watcher(config: &Config) {
         .as_ref()
         .expect("Status dashboard section is missing");
 
-    // Build authorisation headers (T021, T022, T023 - US3)
+    // Build authorization headers using status_dashboard module (T021, T022, T023 - US3)
     // VERIFIED: Existing HMAC-JWT mechanism works unchanged with V2 endpoints
-    // - Same token generation algorithm (HMAC-SHA256)
-    // - Same Authorization header format (Bearer {jwt-token})
-    // - Optional auth supported (only adds header if secret configured)
-    // - Headers reused for both GET /v2/components and POST /v2/incidents
-    let mut headers = HeaderMap::new();
-    if let Some(ref secret) = sdb_config.secret {
-        let key: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();
-        let mut claims = BTreeMap::new();
-        claims.insert("stackmon", "dummy");
-        let token_str = claims.sign_with_key(&key).unwrap();
-        let bearer = format!("Bearer {}", token_str);
-        headers.insert(AUTHORIZATION, bearer.parse().unwrap());
-    }
+    let headers = build_auth_headers(sdb_config.secret.as_deref());
 
     // Initialize component ID cache at startup with retry logic (T024, T025, T026, T027)
     // Per FR-006: 3 retry attempts with 60-second delays

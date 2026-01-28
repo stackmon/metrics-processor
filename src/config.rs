@@ -179,6 +179,7 @@ pub struct StatusDashboardConfig {
 mod test {
     use crate::config;
 
+    use serial_test::serial;
     use std::env;
     use std::fs::{create_dir, File};
     use std::io::Write;
@@ -274,6 +275,7 @@ mod test {
 
     /// Test merging config with env vars
     #[test]
+    #[serial]
     fn test_merge_env() {
         // Create a file inside of `std::env::temp_dir()`.
         let mut config_file = Builder::new().suffix(".yaml").tempfile().unwrap();
@@ -394,6 +396,7 @@ mod test {
     /// Note: This test is effectively covered by test_merge_parts and test_merge_env
     /// but we add an explicit comprehensive test
     #[test]
+    #[serial]
     fn test_config_loading_from_multiple_sources() {
         // Clear any lingering environment variables from other tests
         // This is critical for test isolation when running all tests together
