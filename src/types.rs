@@ -4,6 +4,7 @@
 use crate::config::Config;
 use new_string_template::template::Template;
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::collections::{BTreeMap, HashMap};
@@ -12,7 +13,7 @@ use std::time::Duration;
 
 use reqwest::ClientBuilder;
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum CmpType {
     Lt,
@@ -20,7 +21,7 @@ pub enum CmpType {
     Eq,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct BinaryMetricRawDef {
     pub query: String,
     pub op: CmpType,
@@ -37,7 +38,7 @@ impl Default for BinaryMetricRawDef {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct BinaryMetricDef {
     pub query: Option<String>,
     pub op: Option<CmpType>,
@@ -45,19 +46,19 @@ pub struct BinaryMetricDef {
     pub template: Option<MetricTemplateRef>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct MetricTemplateRef {
     pub name: String,
     pub vars: Option<HashMap<String, String>>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct EnvironmentDef {
     pub name: String,
     pub attributes: Option<HashMap<String, String>>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct FlagMetric {
     pub query: String,
     pub op: CmpType,
@@ -74,13 +75,13 @@ impl Default for FlagMetric {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct MetricExpressionDef {
     pub expression: String,
     pub weight: i32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct FlagMetricDef {
     pub name: String,
     pub service: String,
@@ -88,13 +89,13 @@ pub struct FlagMetricDef {
     pub environments: Vec<MetricEnvironmentDef>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct MetricEnvironmentDef {
     pub name: String,
     pub threshold: Option<f32>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct ServiceHealthDef {
     pub service: String,
     pub component_name: Option<String>,

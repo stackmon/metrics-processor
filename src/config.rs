@@ -37,6 +37,7 @@
 
 use glob::glob;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -49,7 +50,7 @@ use config::{ConfigError, Environment, File};
 use crate::types::{BinaryMetricRawDef, EnvironmentDef, FlagMetricDef, ServiceHealthDef};
 
 /// A Configuration structure
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct Config {
     /// Datasource link
     pub datasource: Datasource,
@@ -129,7 +130,7 @@ impl Config {
 }
 
 /// TSDB Datasource connection
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct Datasource {
     /// TSDB url
     pub url: String,
@@ -139,7 +140,7 @@ pub struct Datasource {
 }
 
 /// Server binding configuration
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct ServerConf {
     /// IP address to bind to
     #[serde(default = "default_address")]
@@ -162,7 +163,7 @@ fn default_timeout() -> u16 {
 }
 
 /// TSDB supported types enum
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DatasourceType {
     /// Graphite
@@ -170,7 +171,7 @@ pub enum DatasourceType {
 }
 
 /// Status Dashboard configuration
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct StatusDashboardConfig {
     /// Status dashboard URL
     pub url: String,
@@ -179,7 +180,7 @@ pub struct StatusDashboardConfig {
 }
 
 /// Health metrics query configuration
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct HealthQueryConfig {
     /// Query start time offset for health metrics (e.g., "-5min")
     #[serde(default = "default_query_from")]
@@ -506,5 +507,30 @@ mod test {
 
         // Cleanup
         dir.close().unwrap();
+    }
+
+    /// Generate JSON schema for configuration.
+    /// Run with: cargo test generate_config_schema -- --ignored
+    /// This test is ignored by default so it only runs when explicitly requested.
+    #[test]
+    #[ignore]
+    fn generate_config_schema() {
+        use schemars::schema_for;
+        use std::fs;
+        use std::path::Path;
+
+        let schema = schema_for!(config::Config);
+        let schema_json =
+            serde_json::to_string_pretty(&schema).expect("Failed to serialize schema");
+
+        let schemas_dir = Path::new("doc/schemas");
+        if !schemas_dir.exists() {
+            fs::create_dir_all(schemas_dir).expect("Failed to create doc/schemas directory");
+        }
+
+        let schema_path = schemas_dir.join("config-schema.json");
+        fs::write(&schema_path, &schema_json).expect("Failed to write config-schema.json");
+
+        println!("Generated JSON schema at: {}", schema_path.display());
     }
 }
