@@ -196,6 +196,24 @@ status_dashboard:
   secret: "your-jwt-secret"
 ```
 
+| Property | Type   | Required | Default | Description                           |
+|----------|--------|----------|---------|---------------------------------------|
+| `url`    | string | Yes      | -       | Status Dashboard API URL              |
+| `secret` | string | No       | -       | JWT signing secret for authentication |
+
+### Health Query Configuration
+
+```yaml
+health_query:
+  query_from: "-5min"  # Start of health metric query window (default: "-5min")
+  query_to: "-2min"    # End of health metric query window (default: "-2min")
+```
+
+| Property     | Type   | Required | Default | Description                                 |
+|--------------|--------|----------|---------|---------------------------------------------|
+| `query_from` | string | No       | `-5min` | Start time offset for health metric queries |
+| `query_to`   | string | No       | `-2min` | End time offset for health metric queries   |
+
 ### Polling Configuration
 
 ```yaml
@@ -294,11 +312,47 @@ cloudmon-metrics-reporter --config config.yaml
 **Logging**:
 ```bash
 RUST_LOG=info cloudmon-metrics-reporter --config config.yaml
+```
 
-# Expected logs:
-INFO Polling convertor for service: api
-INFO Health status: 1 (degraded)
-INFO Sent notification to dashboard: success
+#### Log Examples
+
+**Startup - Component Fetch Success**:
+```
+2026-01-29T10:30:00.123456Z  INFO cloudmon_metrics_reporter: Starting cloudmon-metrics-reporter
+2026-01-29T10:30:00.234567Z  INFO cloudmon_metrics_reporter: Attempting to fetch components from Status Dashboard attempt=1 max_attempts=3
+2026-01-29T10:30:01.345678Z  INFO cloudmon_metrics_reporter: Successfully fetched components from Status Dashboard attempt=1 component_count=42
+2026-01-29T10:30:01.456789Z  INFO cloudmon_metrics_reporter: Starting metric reporter thread
+```
+
+**Incident Creation - Full Decision Context**:
+When the reporter decides to create an incident, it logs all the information needed to understand why:
+```
+2026-01-29T10:30:44.123456Z  INFO cloudmon_metrics_reporter: Creating incident: health metric indicates service degradation environment="prod-eu" service="compute" component_name="Nova API" component_id=218 query_from="-5min" query_to="-2min" metric_timestamp=1738145400 metric_value=2 impact=2 reason="metric value > 0 indicates health issue"
+2026-01-29T10:30:45.234567Z  INFO cloudmon_metrics_reporter: Incident created successfully component_id=218 impact=2
+```
+
+**Component Cache Miss and Refresh**:
+```
+2026-01-29T10:31:00.123456Z  INFO cloudmon_metrics_reporter: Component not found in cache, attempting cache refresh component_name="New Service" service="new-service" environment="prod-eu"
+2026-01-29T10:31:01.234567Z  INFO cloudmon_metrics_reporter: Cache refreshed component_count=43
+```
+
+**Error - Failed to Create Incident**:
+```
+2026-01-29T10:30:45.123456Z ERROR cloudmon_metrics_reporter: Failed to create incident error="HTTP 422: Invalid component ID" component_id=999 service="compute" environment="prod-eu"
+```
+
+**Error - Component Not Found After Refresh**:
+```
+2026-01-29T10:31:02.123456Z  WARN cloudmon_metrics_reporter: Component not found in cache even after refresh, skipping incident creation component_name="Unknown Service" service="unknown" environment="prod-eu"
+```
+
+**Startup Failure - Component Fetch Failed**:
+```
+2026-01-29T10:30:00.123456Z  INFO cloudmon_metrics_reporter: Attempting to fetch components from Status Dashboard attempt=1 max_attempts=3
+2026-01-29T10:30:01.234567Z  WARN cloudmon_metrics_reporter: Failed to fetch components, will retry after delay error="Connection refused" attempt=1 max_attempts=3 retry_delay_seconds=60
+2026-01-29T10:31:01.345678Z  WARN cloudmon_metrics_reporter: Failed to fetch components, will retry after delay error="Connection refused" attempt=2 max_attempts=3 retry_delay_seconds=60
+2026-01-29T10:32:01.456789Z ERROR cloudmon_metrics_reporter: Failed to fetch components after all retry attempts, reporter cannot start error="Connection refused" attempt=3 max_attempts=3
 ```
 
 ### Performance

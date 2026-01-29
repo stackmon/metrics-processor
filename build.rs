@@ -26,6 +26,9 @@ pub struct Config {
     pub health_metrics: HashMap<String, ServiceHealthDef>,
     /// Status dashboard connection (optional)
     pub status_dashboard: Option<StatusDashboardConfig>,
+    /// Health metrics query configuration
+    #[serde(default)]
+    pub health_query: HealthQueryConfig,
 }
 
 /// TSDB Datasource connection
@@ -127,6 +130,25 @@ pub struct StatusDashboardConfig {
     pub url: String,
     /// JWT token signature secret (optional)
     pub secret: Option<String>,
+}
+
+/// Health metrics query configuration
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct HealthQueryConfig {
+    /// Query start time offset for health metrics (e.g., "-5min")
+    #[serde(default = "default_query_from")]
+    pub query_from: String,
+    /// Query end time offset for health metrics (e.g., "-2min")
+    #[serde(default = "default_query_to")]
+    pub query_to: String,
+}
+
+fn default_query_from() -> String {
+    "-5min".to_string()
+}
+
+fn default_query_to() -> String {
+    "-2min".to_string()
 }
 
 fn default_address() -> String {

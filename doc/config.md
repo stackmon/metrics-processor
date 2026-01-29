@@ -89,7 +89,33 @@ This section is providing capability to describe query templates to be later ref
 
 ## status_dashboard
 
-Configures URL and jwt secret for communication with the status dashboard
+Configures URL and JWT secret for communication with the status dashboard.
+
+```yaml
+status_dashboard:
+  url: "https://status-dashboard.example.com"
+  secret: "your-jwt-secret"
+```
+
+| Property | Type   | Required | Default | Description                           |
+|----------|--------|----------|---------|---------------------------------------|
+| `url`    | string | Yes      | -       | Status Dashboard API URL              |
+| `secret` | string | No       | -       | JWT signing secret for authentication |
+
+## health_query
+
+Configures the time window for health metric queries.
+
+```yaml
+health_query:
+  query_from: "-5min"
+  query_to: "-2min"
+```
+
+| Property     | Type   | Required | Default | Description                                                         |
+|--------------|--------|----------|---------|---------------------------------------------------------------------|
+| `query_from` | string | No       | `-5min` | Start time offset for health metric queries (e.g., "-10min", "-1h") |
+| `query_to`   | string | No       | `-2min` | End time offset for health metric queries (e.g., "-1min", "-30s")   |
 
 ## flag_metrics
 

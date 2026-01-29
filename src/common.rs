@@ -506,7 +506,7 @@ mod tests {
         expressions: Vec<(&str, i32)>,
         graphite_url: &str,
     ) -> AppState {
-        use crate::config::{Config, Datasource, ServerConf};
+        use crate::config::{Config, Datasource, HealthQueryConfig, ServerConf};
 
         let config = Config {
             datasource: Datasource {
@@ -525,6 +525,7 @@ mod tests {
                 attributes: None,
             }],
             status_dashboard: None,
+            health_query: HealthQueryConfig::default(),
         };
 
         let mut state = AppState::new(config);

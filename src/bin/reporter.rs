@@ -193,12 +193,12 @@ async fn metric_watcher(config: &Config) {
                         "http://localhost:{}/api/v1/health",
                         config.server.port
                     ))
-                    // Query env/service for time [-5min..-2min]
+                    // Query env/service for time [query_from...query_to]
                     .query(&[
                         ("environment", env.name.clone()),
                         ("service", component.0.clone()),
-                        ("from", "-5min".to_string()),
-                        ("to", "-2min".to_string()),
+                        ("from", config.health_query.query_from.clone()),
+                        ("to", config.health_query.query_to.clone()),
                     ])
                     .send()
                     .await
@@ -243,8 +243,8 @@ async fn metric_watcher(config: &Config) {
                                                 {
                                                     Ok(components) => {
                                                         tracing::info!(
-                                                            "Cache refreshed with {} components",
-                                                            components.len()
+                                                            component_count = components.len(),
+                                                            "cache refreshed"
                                                         );
                                                         component_cache =
                                                             build_component_id_cache(components);
@@ -274,15 +274,19 @@ async fn metric_watcher(config: &Config) {
                                                         last.0 as i64,
                                                     );
 
-                                                    // Structured logging with diagnostic fields (FR-017)
+                                                    // Include full decision context: query parameters, metric value, and why incident is created
                                                     tracing::info!(
-                                                        timestamp = last.0,
-                                                        service = component.0.as_str(),
                                                         environment = env.name.as_str(),
+                                                        service = component.0.as_str(),
                                                         component_name = comp.name.as_str(),
                                                         component_id = id,
+                                                        query_from = config.health_query.query_from.as_str(),
+                                                        query_to = config.health_query.query_to.as_str(),
+                                                        metric_timestamp = last.0,
+                                                        metric_value = last.1,
                                                         impact = last.1,
-                                                        "Creating incident for health issue"
+                                                        reason = "metric value > 0 indicates health issue",
+                                                        "Creating incident: health metric indicates service degradation"
                                                     );
 
                                                     // Create incident via V2 API

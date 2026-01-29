@@ -40,6 +40,14 @@
         "$ref": "#/definitions/ServiceHealthDef"
       }
     },
+    "health_query": {
+      "description": "Health metrics query configuration",
+      "allOf": [
+        {
+          "$ref": "#/definitions/HealthQueryConfig"
+        }
+      ]
+    },
     "metric_templates": {
       "description": "Metric query templates",
       "type": [
@@ -201,6 +209,22 @@
               "$ref": "#/definitions/TemplateDef"
             }
           ]
+        }
+      }
+    },
+    "HealthQueryConfig": {
+      "description": "Health metrics query configuration",
+      "type": "object",
+      "properties": {
+        "query_from": {
+          "description": "Query start time offset for health metrics (e.g., \"-5min\")",
+          "default": "-5min",
+          "type": "string"
+        },
+        "query_to": {
+          "description": "Query end time offset for health metrics (e.g., \"-2min\")",
+          "default": "-2min",
+          "type": "string"
         }
       }
     },
