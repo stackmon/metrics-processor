@@ -545,10 +545,7 @@ async fn test_fetch_components_failure() {
 
     let result = fetch_components(&client, &server.url(), &headers).await;
 
-    assert!(
-        result.is_err(),
-        "fetch_components should fail on 503 error"
-    );
+    assert!(result.is_err(), "fetch_components should fail on 503 error");
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("Failed to fetch components"),
@@ -557,4 +554,3 @@ async fn test_fetch_components_failure() {
 
     mock.assert_async().await;
 }
-

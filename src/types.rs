@@ -653,4 +653,3 @@ fn test_flag_metric_default() {
     assert!(matches!(default.op, CmpType::Lt));
     assert_eq!(default.threshold, 0.0);
 }
-

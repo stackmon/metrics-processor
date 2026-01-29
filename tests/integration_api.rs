@@ -227,4 +227,3 @@ async fn test_health_endpoint_graphite_error() {
     let message = body["message"].as_str().unwrap();
     assert!(message.contains("Graphite error") || message.contains("error"));
 }
-
