@@ -110,8 +110,18 @@ pub struct MetricData {
     #[serde(rename(serialize = "datapoints"))]
     pub points: MetricPoints,
 }
-/// List of the service health values (ts, data)
-pub type ServiceHealthData = Vec<(u32, u8)>;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServiceHealthPoint {
+    pub ts: u32,
+    pub value: u8,
+    #[serde(default)]
+    pub triggered: Vec<String>,
+    #[serde(default)]
+    pub metric_value: Option<f64>,
+}
+
+/// List of the service health datapoints
+pub type ServiceHealthData = Vec<ServiceHealthPoint>;
 
 pub enum CloudMonError {
     ServiceNotSupported,

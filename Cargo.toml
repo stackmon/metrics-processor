@@ -18,9 +18,10 @@ path="src/bin/reporter.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = { version = "~1.0" }
 axum = { version="~0.6" }
 axum-macros = { version="~0.3" }
-chrono = "~0.4"
+chrono = { version = "~0.4", features = ["serde"] }
 config = "~0.13"
 evalexpr = "~9.0"
 glob = "~0.3"
