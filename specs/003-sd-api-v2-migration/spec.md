@@ -109,7 +109,7 @@ The reporter continues to use the same authorization mechanism (HMAC-based JWT t
 
 - **FR-013**: Reporter MUST log comprehensive incident information including timestamp, status, service, environment, component details, and triggered metrics
 
-- **FR-014**: Reporter MUST increase the HTTP timeout from 2 seconds to 10 seconds to accommodate the new endpoint's response times
+~~- **FR-014**: Reporter MUST increase the HTTP timeout from 2 seconds to 10 seconds to accommodate the new endpoint's response times~~
 
 - **FR-015**: Reporter MUST continue monitoring other services even if incident creation fails for one service, logging the error without immediate retry and allowing the next monitoring cycle to re-attempt
 

@@ -11,7 +11,6 @@ This guide provides a quickstart for implementing the Status Dashboard API V2 mi
 **Key Changes**:
 - ✅ Component ID cache at startup (with retry)
 - ✅ New incident structure with static title/description
-- ✅ HTTP timeout increased from 2s to 10s
 - ✅ Structured diagnostic logging (not sent to API)
 - ✅ Authorization unchanged (HMAC-JWT)
 
@@ -289,9 +288,8 @@ Replace the monitoring loop in `metric_watcher()`:
 async fn metric_watcher(config: &Config) {
     tracing::info!("Starting metric reporter thread");
     
-    // Init reqwest client with 10s timeout (FR-014)
     let req_client: reqwest::Client = ClientBuilder::new()
-        .timeout(Duration::from_secs(10))  // Changed from 2s
+        .timeout(Duration::from_secs(2))
         .build()
         .unwrap();
     

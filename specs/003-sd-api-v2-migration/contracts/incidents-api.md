@@ -450,7 +450,7 @@ tracing::info!(
 
 - **Request Size**: ~300 bytes per incident (small payload)
 - **Frequency**: ~1-10 incidents/min under normal load, higher during widespread issues
-- **Timeout**: 10 seconds per FR-014 (increased from 2s)
+~~- **Timeout**: 10 seconds per FR-014 (increased from 2s)~~
 - **Retry Strategy**: No immediate retry on failure, rely on next monitoring cycle (~60s per FR-015)
 
 ## Security

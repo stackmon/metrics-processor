@@ -29,7 +29,7 @@
 **Purpose**: Project initialisation and dependency updates
 
 - [x] T001 Add anyhow ~1.0 dependency to Cargo.toml for Result error handling
-- [x] T002 [P] Update reqwest client timeout from 2s to 10s in src/bin/reporter.rs per FR-014
+~~- [x] T002 [P] Update reqwest client timeout from 2s to 10s in src/bin/reporter.rs per FR-014~~
 
 ---
 

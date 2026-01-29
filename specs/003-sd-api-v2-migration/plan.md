@@ -5,7 +5,7 @@
 
 ## Summary
 
-Migrate the `cloudmon-metrics-reporter` from Status Dashboard API V1 (`/v1/component_status`) to V2 (`/v2/incidents`, `/v2/components`). The migration introduces component ID caching with retry logic, restructures incident data with static title/description for security, and increases HTTP timeout from 2s to 10s. Authorization mechanism (HMAC-JWT) remains unchanged. All 17 functional requirements (FR-001 through FR-017) are addressed through a nested HashMap cache structure with subset attribute matching, structured diagnostic logging separate from API payloads, and graceful error handling with automatic recovery.
+Migrate the `cloudmon-metrics-reporter` from Status Dashboard API V1 (`/v1/component_status`) to V2 (`/v2/events`, `/v2/components`). The migration introduces component ID caching with retry logic, restructures incident data with static title/description for security. Authorization mechanism (HMAC-JWT) remains unchanged. All 17 functional requirements (FR-001 through FR-017) are addressed through a nested HashMap cache structure with subset attribute matching, structured diagnostic logging separate from API payloads, and graceful error handling with automatic recovery.
 
 ## Technical Context
 
@@ -39,7 +39,6 @@ Migrate the `cloudmon-metrics-reporter` from Status Dashboard API V1 (`/v1/compo
 - Memory footprint: <100MB RSS under normal operation (Constitution IV)
 - Component cache refresh: 3 retries × 60s delays on startup (FR-006)
 - Incident creation: no immediate retry on failure, rely on 60s monitoring cycle (FR-015)
-- HTTP timeout: 10 seconds for V2 API calls (FR-014)
 
 **Scale/Scope**: 
 - ~100 components in Status Dashboard
@@ -83,12 +82,11 @@ Migrate the `cloudmon-metrics-reporter` from Status Dashboard API V1 (`/v1/compo
 
 ### Principle IV: Performance Requirements
 
-| Requirement | Status | Compliance Notes |
-|-------------|--------|------------------|
-| Response time targets | ✅ PASS | HTTP timeout increased to 10s (FR-014) accommodates V2 API; monitoring cycle remains 60s |
-| Resource efficiency | ✅ PASS | Component cache adds ~20KB memory (negligible); no heap allocation in hot paths |
-| Async operations | ✅ PASS | All I/O uses async/await with `tokio` runtime (existing pattern maintained) |
-| Query optimization | ✅ PASS | Component cache eliminates repeated API calls; cached lookup is O(n) for ~100 components (acceptable) |
+| Requirement         | Status   | Compliance Notes                                                                                      |
+|---------------------|----------|-------------------------------------------------------------------------------------------------------|
+| Resource efficiency | ✅ PASS   | Component cache adds ~20KB memory (negligible); no heap allocation in hot paths                       |
+| Async operations    | ✅ PASS   | All I/O uses async/await with `tokio` runtime (existing pattern maintained)                           |
+| Query optimization  | ✅ PASS   | Component cache eliminates repeated API calls; cached lookup is O(n) for ~100 components (acceptable) |
 | Performance testing | ⚠️ DEFER | Benchmark tests for cache lookup optional (not in hot path); integration tests cover timeout behavior |
 
 ### Development Workflow
@@ -164,7 +162,6 @@ openapi.yaml                   # Reference - Status Dashboard API V2 contract so
    - Update `ComponentAttribute` derives (add `PartialOrd`, `Ord`, `Hash`)
    - Add functions: `fetch_components*`, `build_component_id_cache`, `find_component_id`, `build_incident_data`, `create_incident`
    - Update `metric_watcher`: load cache at startup, replace V1 endpoint with V2, add cache miss handling
-   - Update `ClientBuilder` timeout from 2s to 10s
 
 **New Files**:
 3. **`tests/reporter_v2_integration.rs`**: Integration tests using `mockito` to mock Status Dashboard V2 endpoints
@@ -191,9 +188,8 @@ openapi.yaml                   # Reference - Status Dashboard API V2 contract so
 2. **V2 Incident Payload**: Static title/description, generic content (security per FR-017)
 3. **Error Handling**: 3x retry on startup (FR-006), single refresh on miss (FR-005), no immediate retry on incident creation (FR-015)
 4. **Testing**: mockito for API mocking, tokio-test for async tests
-5. **HTTP Timeout**: 2s → 10s (FR-014)
-6. **Authorization**: HMAC-JWT unchanged (FR-008)
-7. **Timestamp Handling**: RFC3339 with -1 second adjustment (FR-011)
+5. **Authorization**: HMAC-JWT unchanged (FR-008)
+6. **Timestamp Handling**: RFC3339 with -1 second adjustment (FR-011)
 
 **All Technical Unknowns Resolved**: No "NEEDS CLARIFICATION" items remain.
 
@@ -309,12 +305,12 @@ openapi.yaml                   # Reference - Status Dashboard API V2 contract so
 
 **Status**: ✅ **PASS** - All principles maintained
 
-| Principle | Re-Check Result |
-|-----------|-----------------|
-| I. Code Quality | ✅ Rust-idiomatic design, strong typing, proper error handling (anyhow::Result) |
-| II. Testing | ✅ Comprehensive unit + integration tests planned (95% coverage target) |
-| III. UX Consistency | ✅ Structured logging with FR-017 diagnostic fields, no config changes |
-| IV. Performance | ✅ Component cache adds ~20KB, O(n) lookup acceptable, 10s timeout adequate |
+| Principle           | Re-Check Result                                                                |
+|---------------------|--------------------------------------------------------------------------------|
+| I. Code Quality     | ✅ Rust-idiomatic design, strong typing, proper error handling (anyhow::Result) |
+| II. Testing         | ✅ Comprehensive unit + integration tests planned (95% coverage target)         |
+| III. UX Consistency | ✅ Structured logging with FR-017 diagnostic fields, no config changes          |
+| IV. Performance     | ✅ Component cache adds ~20KB, O(n) lookup acceptable                           |
 
 **No new violations introduced.** Design maintains project's existing architectural patterns.
 

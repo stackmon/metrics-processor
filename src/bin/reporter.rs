@@ -23,6 +23,8 @@ use std::collections::HashMap;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+const CLIENT_TIMEOUT_SECS: u64 = 2;
+
 /// Component status for V1 API (legacy, will be replaced)
 #[derive(Deserialize, Serialize, Debug)]
 pub struct ComponentStatus {
@@ -78,7 +80,7 @@ async fn metric_watcher(config: &Config) {
     tracing::info!("Starting metric reporter thread");
     // Init reqwest client
     let req_client: reqwest::Client = ClientBuilder::new()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(CLIENT_TIMEOUT_SECS))
         .build()
         .unwrap();
     // Endless loop

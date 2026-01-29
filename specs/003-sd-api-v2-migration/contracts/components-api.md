@@ -286,7 +286,7 @@ async fn fetch_components_with_retry(
 
 - **Response Size**: ~100 components × ~200 bytes = ~20 KB (small payload)
 - **Frequency**: Once at startup + rare refreshes (only on cache miss)
-- **Timeout**: Use 10-second timeout per FR-014
+~~- **Timeout**: Use 10-second timeout per FR-014~~
 - **Caching**: Store in memory for duration of reporter process
 
 ## Security

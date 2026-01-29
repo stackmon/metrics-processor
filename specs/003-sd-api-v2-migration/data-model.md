@@ -489,10 +489,10 @@ if let Some((timestamp, impact)) = response.metrics.last() {
                 │
                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ 5. POST to /v2/incidents                                        │
+│ 5. POST to /v2/events                                           │
 │    Authorization: Bearer <HMAC-JWT>                             │
 │    Body: IncidentData (JSON)                                    │
-│    Timeout: 10s (FR-014)                                        │
+│    Timeout: 2s                                                  │
 └───────────────┬─────────────────────────────────────────────────┘
                 │
           ┌─────┴─────┐
@@ -709,12 +709,12 @@ if let Some((timestamp, impact)) = response.metrics.last() {
 
 ## Performance Characteristics
 
-| Operation | Complexity | Frequency | Optimization |
-|-----------|-----------|-----------|--------------|
-| Cache build | O(n log n) | Once at startup + rare refreshes | Acceptable; n ~100 |
-| Component lookup | O(n) worst case | Per incident (~1-10/min) | Acceptable for n ~100 |
-| Incident creation | O(1) | Per health issue (~1-10/min) | HTTP timeout 10s |
-| Health query | O(1) | Every 60s per service | Existing, unchanged |
+| Operation         | Complexity      | Frequency                        | Optimization          |
+|-------------------|-----------------|----------------------------------|-----------------------|
+| Cache build       | O(n log n)      | Once at startup + rare refreshes | Acceptable; n ~100    |
+| Component lookup  | O(n) worst case | Per incident (~1-10/min)         | Acceptable for n ~100 |
+| Incident creation | O(1)            | Per health issue (~1-10/min)     | HTTP timeout 2s       |
+| Health query      | O(1)            | Every 60s per service            | Existing, unchanged   |
 
 **Memory Usage**:
 - `ComponentCache`: ~100 entries × ~200 bytes/entry = ~20 KB

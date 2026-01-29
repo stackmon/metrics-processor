@@ -209,38 +209,7 @@ Per Constitution II (Unit Test Coverage: 95%):
 
 ---
 
-## 5. HTTP Timeout Adjustment
-
-### Decision: Increase from 2s to 10s for all reporter HTTP requests
-
-**Rationale**:
-FR-014 requires timeout increase to accommodate V2 endpoint response times. Current V1 implementation:
-```rust
-let req_client = ClientBuilder::new()
-    .timeout(Duration::from_secs(2))  // Current
-    .build()?;
-```
-
-Change to:
-```rust
-let req_client = ClientBuilder::new()
-    .timeout(Duration::from_secs(10))  // FR-014
-    .build()?;
-```
-
-**Why this approach**:
-1. **Simple**: Single-line change in client builder
-2. **Applies globally**: Both cache load and incident creation use same client
-3. **Safe margin**: 10s allows for network variability while still meeting SC-001 (incident within 10s of detection)
-
-**Alternatives considered**:
-- **Option A: Different timeouts per endpoint** - Complexity without clear benefit
-- **Option B: Retry on timeout** - FR-015 says no retry for incident creation
-- **Option C: Keep 2s timeout** - Violates FR-014; V2 endpoints demonstrably slower
-
----
-
-## 6. Authorization: HMAC-JWT Token (Unchanged)
+## 5. Authorization: HMAC-JWT Token (Unchanged)
 
 ### Decision: Reuse existing V1 authorization mechanism
 
@@ -260,7 +229,7 @@ headers.insert(AUTHORIZATION, format!("Bearer {}", token_str).parse()?);
 
 ---
 
-## 7. Timestamp Handling: start_date Field
+## 6. Timestamp Handling: start_date Field
 
 ### Decision: Use health metric timestamp minus 1 second, formatted as RFC3339
 
@@ -295,14 +264,13 @@ let start_date = (dt - Duration::seconds(1)).to_rfc3339();
 
 ## Summary of Research Findings
 
-| Topic | Decision | Key Constraint |
-|-------|----------|----------------|
-| Component Cache | Nested HashMap with attribute hash keys | FR-004, FR-012 (subset matching) |
+| Topic            | Decision                                | Key Constraint                       |
+|------------------|-----------------------------------------|--------------------------------------|
+| Component Cache  | Nested HashMap with attribute hash keys | FR-004, FR-012 (subset matching)     |
 | Incident Payload | Static serde struct with generic fields | FR-002, FR-017 (security separation) |
-| Error Handling | 3x retry on startup, 1x refresh on miss | FR-005, FR-006, FR-007, FR-015 |
-| Testing | mockito + tokio-test | Constitution II (95% coverage) |
-| HTTP Timeout | 2s → 10s | FR-014 |
-| Authorization | Unchanged HMAC-JWT | FR-008 |
-| Timestamps | RFC3339, -1 second adjustment | FR-011 |
+| Error Handling   | 3x retry on startup, 1x refresh on miss | FR-005, FR-006, FR-007, FR-015       |
+| Testing          | mockito + tokio-test                    | Constitution II (95% coverage)       |
+| Authorization    | Unchanged HMAC-JWT                      | FR-008                               |
+| Timestamps       | RFC3339, -1 second adjustment           | FR-011                               |
 
 All decisions traceable to specific functional requirements or Constitution principles. No unknowns remaining - proceed to Phase 1 (Design).
