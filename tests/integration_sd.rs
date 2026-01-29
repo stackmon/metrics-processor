@@ -485,3 +485,76 @@ fn test_build_auth_headers() {
     let headers_empty = build_auth_headers(None);
     assert!(!headers_empty.contains_key(reqwest::header::AUTHORIZATION));
 }
+
+/// Test create_incident failure - verify error handling when API returns error
+#[tokio::test]
+async fn test_create_incident_failure() {
+    let mut server = mockito::Server::new_async().await;
+
+    // Mock POST /v2/events to return 500 error (note: actual endpoint is /v2/events)
+    let mock = server
+        .mock("POST", "/v2/events")
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"error": "Internal Server Error"}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let client = reqwest::Client::new();
+    let headers = reqwest::header::HeaderMap::new();
+
+    let incident_data = IncidentData {
+        title: "System incident from monitoring system".to_string(),
+        description: "Test incident".to_string(),
+        impact: 2,
+        components: vec![218],
+        start_date: "2024-01-22T10:30:44Z".to_string(),
+        system: true,
+        incident_type: "incident".to_string(),
+    };
+
+    let result = create_incident(&client, &server.url(), &headers, &incident_data).await;
+
+    assert!(result.is_err(), "create_incident should fail on 500 error");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Failed to create incident"),
+        "Error message should mention failure: {}",
+        err_msg
+    );
+
+    mock.assert_async().await;
+}
+
+/// Test fetch_components failure - verify error handling when API returns error
+#[tokio::test]
+async fn test_fetch_components_failure() {
+    let mut server = mockito::Server::new_async().await;
+
+    // Mock GET /v2/components to return 503 error
+    let mock = server
+        .mock("GET", "/v2/components")
+        .with_status(503)
+        .with_body("Service Unavailable")
+        .create_async()
+        .await;
+
+    let client = reqwest::Client::new();
+    let headers = reqwest::header::HeaderMap::new();
+
+    let result = fetch_components(&client, &server.url(), &headers).await;
+
+    assert!(
+        result.is_err(),
+        "fetch_components should fail on 503 error"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("Failed to fetch components"),
+        "Error message should mention failure"
+    );
+
+    mock.assert_async().await;
+}
+

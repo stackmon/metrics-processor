@@ -187,3 +187,44 @@ async fn test_health_endpoint_unsupported_environment() {
     let message = body["message"].as_str().unwrap();
     assert!(message.contains("not supported"));
 }
+
+/// Test INTERNAL_SERVER_ERROR response when Graphite returns an error
+#[tokio::test]
+async fn test_health_endpoint_graphite_error() {
+    let mut server = mockito::Server::new();
+
+    // Mock Graphite to return client error (which triggers GraphiteError)
+    let _mock = server
+        .mock("GET", "/render")
+        .with_status(400)
+        .with_body("Bad Request")
+        .create();
+
+    let config_str = configs::error_test_config(&server.url());
+    let config = config::Config::from_config_str(&config_str);
+    let mut state = types::AppState::new(config);
+    state.process_config();
+
+    let app = Router::new()
+        .nest("/api/v1", api::v1::get_v1_routes())
+        .with_state(state);
+
+    // Request with valid parameters but Graphite will fail
+    let request = Request::builder()
+        .uri("/api/v1/health?service=webapp&environment=prod&from=now-1h&to=now")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+
+    // Should return INTERNAL_SERVER_ERROR status for GraphiteError
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+
+    // Verify error response format has "message" field
+    assert!(body.get("message").is_some());
+    let message = body["message"].as_str().unwrap();
+    assert!(message.contains("Graphite error") || message.contains("error"));
+}
+

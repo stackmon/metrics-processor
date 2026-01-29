@@ -644,3 +644,13 @@ fn test_binary_metric_raw_def_default() {
     assert_eq!(default.op, CmpType::Lt);
     assert_eq!(default.threshold, 0.0);
 }
+
+/// Additional coverage test: Test FlagMetric Default implementation
+#[test]
+fn test_flag_metric_default() {
+    let default = FlagMetric::default();
+    assert_eq!(default.query, String::new());
+    assert!(matches!(default.op, CmpType::Lt));
+    assert_eq!(default.threshold, 0.0);
+}
+
