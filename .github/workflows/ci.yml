@@ -22,12 +22,12 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt, clippy
-# Temporarily disabled linting and formatting checks, to be re-enabled later.
-#    - name: Check formatting
-#      run: make fmt-check
-#
-#    - name: Run linter
-#      run: make lint
+
+    - name: Check formatting
+      run: make fmt-check
+
+    - name: Run linter
+      run: make lint
 
     - name: Run tests
       run: make test
