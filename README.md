@@ -73,7 +73,7 @@ mdbook serve doc/
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all unit tests
 cargo test
 
 # Run tests with output
@@ -85,6 +85,31 @@ cargo test common::tests
 # Run tests in parallel (default)
 cargo test -- --test-threads=4
 ```
+
+### E2E Integration Tests
+
+End-to-end tests validate the complete pipeline using real Docker containers (go-carbon + carbonapi).
+
+#### Prerequisites
+- Docker installed and running
+- Ports available: 2003, 8080, 3005, 9999
+
+#### Running E2E Tests
+
+```bash
+# Run E2E tests (Docker containers are managed automatically)
+cargo test --test integration_e2e_reporter -- --ignored --nocapture
+```
+
+The E2E test validates 4 scenarios:
+| Scenario | Expected Weight | Description |
+|----------|-----------------|-------------|
+| healthy | 0 | All metrics within thresholds |
+| degraded_slow | 1 | API response time > 1200ms |
+| degraded_errors | 1 | Success rate < 65% |
+| outage | 2 | 100% API failures |
+
+For details, see [Testing Guide](doc/testing.md).
 
 ### Test Coverage
 
@@ -98,8 +123,6 @@ cargo tarpaulin --out Html
 # Open coverage report
 open tarpaulin-report.html
 ```
-
-For detailed testing documentation, see [Testing Guide](doc/testing.md).
 
 ### JSON Schema for Configuration
 

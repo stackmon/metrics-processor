@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the comprehensive test suite for the metrics-processor project, including test execution, coverage measurement, and regression protection.
+This document describes the comprehensive test suite for the metrics-processor project, including unit tests, integration tests, E2E tests, coverage measurement, and regression protection.
 
 ## Test Organization
 
@@ -10,32 +10,39 @@ This document describes the comprehensive test suite for the metrics-processor p
 
 ```
 tests/
-├── fixtures/                   # Shared test fixtures and utilities
-│   ├── mod.rs                 # Module declaration
-│   ├── configs.rs             # YAML configuration fixtures
-│   ├── graphite_responses.rs  # Mock Graphite response data
-│   └── helpers.rs             # Test helper functions and assertions
-├── documentation_validation.rs # Documentation validation tests
-├── integration_health.rs       # Service health integration tests
-└── integration_api.rs          # API integration tests
+├── fixtures/                      # Shared test fixtures and utilities
+│   ├── mod.rs                     # Module declaration
+│   ├── configs.rs                 # YAML configuration fixtures
+│   ├── graphite_responses.rs      # Mock Graphite response data
+│   └── helpers.rs                 # Test helper functions and assertions
+├── docker/                        # Docker setup for E2E tests
+│   ├── docker-compose.yml         # go-carbon + carbonapi containers
+│   ├── go-carbon.conf             # Carbon storage configuration
+│   ├── carbonapi.yml              # CarbonAPI configuration
+│   └── README.md                  # Docker setup documentation
+├── integration_e2e_reporter.rs    # E2E tests with real Graphite
+├── integration_health.rs          # Service health integration tests
+├── integration_api.rs             # API integration tests
+└── documentation_validation.rs    # Documentation validation tests
 
 src/
-├── common.rs                  # + #[cfg(test)] mod tests { 11 tests }
-├── types.rs                   # + #[cfg(test)] mod tests { 6 tests }
-├── config.rs                  # + #[cfg(test)] mod tests { 7 tests }
-├── graphite.rs                # + #[cfg(test)] mod tests { 6 tests }
-└── api/v1.rs                  # + #[cfg(test)] mod tests { 4 tests }
+├── common.rs                      # + #[cfg(test)] mod tests { 11 tests }
+├── types.rs                       # + #[cfg(test)] mod tests { 6 tests }
+├── config.rs                      # + #[cfg(test)] mod tests { 7 tests }
+├── graphite.rs                    # + #[cfg(test)] mod tests { 6 tests }
+└── api/v1.rs                      # + #[cfg(test)] mod tests { 4 tests }
 ```
 
 ### Test Categories
 
 1. **Unit Tests**: Located inline with source code using `#[cfg(test)]` modules
 2. **Integration Tests**: Located in `tests/` directory for cross-module scenarios
-3. **Fixtures**: Shared test data and utilities in `tests/fixtures/`
+3. **E2E Tests**: Full pipeline tests with real Docker containers
+4. **Fixtures**: Shared test data and utilities in `tests/fixtures/`
 
 ## Running Tests
 
-### Run All Tests
+### Run All Unit Tests
 
 ```bash
 cargo test
@@ -50,7 +57,7 @@ cargo test common::tests
 # Run only config tests
 cargo test config::tests
 
-# Run only integration tests
+# Run only integration tests (excluding E2E)
 cargo test --test integration_*
 ```
 
@@ -71,6 +78,108 @@ cargo test -- --test-threads=4
 ```bash
 cargo test -- --test-threads=1
 ```
+
+## E2E Integration Tests
+
+The E2E tests (`integration_e2e_reporter.rs`) validate the complete metrics-processor pipeline using real Docker containers.
+
+### What They Test
+
+- Metrics ingestion via Carbon protocol
+- Query processing via CarbonAPI
+- Health expression evaluation
+- Incident creation and severity assignment
+- Reporter log output format and content
+
+### Prerequisites
+
+1. **Docker**: Must be installed and running
+2. **Available Ports**:
+   - `2003` - Carbon plaintext protocol
+   - `8080` - CarbonAPI query endpoint
+   - `3005` - Convertor API
+   - `9999` - Mock Status Dashboard
+
+### Running E2E Tests
+
+```bash
+# Run E2E tests (Docker containers managed automatically)
+cargo test --test integration_e2e_reporter -- --ignored --nocapture
+```
+
+The test automatically:
+1. Restarts Docker containers to ensure clean state
+2. Builds convertor and reporter binaries
+3. Runs all 4 test scenarios
+4. Validates log output for each scenario
+
+### Test Scenarios
+
+| Scenario | Weight | Condition | Expected Log |
+|----------|--------|-----------|--------------|
+| `healthy` | 0 | All metrics OK | No incident log |
+| `degraded_slow` | 1 | Response time > 1200ms | `matched_expression="...api_slow..."` |
+| `degraded_errors` | 1 | Success rate < 65% | `matched_expression="...api_success_rate_low..."` |
+| `outage` | 2 | 100% failures | `matched_expression="...api_down"` |
+
+### E2E Test Architecture
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Test Code  │────▶│  go-carbon  │────▶│  carbonapi  │
+│(write data) │     │  (storage)  │     │   (query)   │
+└─────────────┘     └─────────────┘     └─────────────┘
+                                               │
+      ┌────────────────────────────────────────┘
+      ▼
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Convertor  │────▶│  Reporter   │────▶│ Mock Status │
+│  (process)  │     │   (alert)   │     │  Dashboard  │
+└─────────────┘     └─────────────┘     └─────────────┘
+      │                   │
+      │                   ▼
+      │             ┌─────────────┐
+      └────────────▶│  Log Output │◀── Test validates
+                    │  (stdout)   │
+                    └─────────────┘
+```
+
+### Data Isolation
+
+Each scenario uses a unique service name (e.g., `rms_healthy`, `rms_outage`) to prevent data pollution between scenarios. This allows sequential execution without clearing Graphite data.
+
+### E2E Troubleshooting
+
+#### "Docker containers failed to start"
+```bash
+# Check Docker is running
+docker ps
+
+# Check port availability
+lsof -i :2003 -i :8080 -i :3005 -i :9999
+
+# Manually start containers
+cd tests/docker && docker compose up -d
+```
+
+#### "Convertor not ready after timeout"
+- The convertor may need more time to start
+- Check for port conflicts on 3005
+- Review convertor stderr output
+
+#### "No incident log found"
+```bash
+# Verify Graphite received data
+curl 'http://localhost:8080/metrics/find?query=stats.*&format=json'
+
+# Check go-carbon logs
+docker logs metrics-processor-go-carbon
+```
+
+#### "Log validation failed"
+- Verify expected expression matches the config
+- Check for ANSI escape codes (test strips them automatically)
+- Review the full log output in test output
 
 ## Test Coverage
 

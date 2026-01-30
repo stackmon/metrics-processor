@@ -1,0 +1,36 @@
+# CarbonAPI configuration for testing
+listen: ":8080"
+prefix: ""
+notFoundStatusCode: 404
+headersToPass: []
+headersToLog: []
+
+upstreams:
+  backends:
+    - "http://go-carbon:7002"
+
+  timeouts:
+    find: "2s"
+    render: "10s"
+    connect: "2s"
+
+expireDelaySec: 600
+maxBatchSize: 100
+
+concurrency:
+  maxProcs: 0
+  maxRenderRequest: 10
+  maxBatchRenderRequest: 10
+
+cache:
+  type: "mem"
+  size_mb: 0
+  defaultTimeoutSec: 60
+
+logger:
+  - logger: ""
+    file: "stdout"
+    level: "info"
+    encoding: "console"
+    encodingTime: "iso8601"
+    encodingDuration: "seconds"

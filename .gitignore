@@ -28,3 +28,6 @@ docs/
 coverage/
 tarpaulin-report.html
 cobertura.xml
+
+# ai assistant files
+skills
