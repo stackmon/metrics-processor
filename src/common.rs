@@ -1,6 +1,9 @@
 //! Common methods
 //!
-use crate::types::{AppState, CloudMonError, CmpType, FlagMetric, ServiceHealthData};
+use crate::types::{
+    AppState, CloudMonError, CmpType, FlagMetric, MetricDetail, ServiceHealthData,
+    ServiceHealthDataPoint,
+};
 use chrono::DateTime;
 use evalexpr::*;
 use std::collections::{BTreeMap, HashMap};
@@ -116,6 +119,7 @@ pub async fn get_service_health(
                 .unwrap();
         }
         let mut expression_res: u8 = 0;
+        let mut matched_expression: Option<String> = None;
         // loop over all expressions
         for expr in hm_config.expressions.iter() {
             // if expression weight is lower than what we have already - skip
@@ -126,6 +130,7 @@ pub async fn get_service_health(
                 Ok(m) => {
                     if m {
                         expression_res = expr.weight as u8;
+                        matched_expression = Some(expr.expression.clone());
                         tracing::debug!(
                             "Summary of evaluation expression for service: {:?}, expression: {:?}, weight: {:?}",
                             service,
@@ -145,7 +150,31 @@ pub async fn get_service_health(
                 }
             }
         }
-        result.push((*ts, expression_res));
+
+        // Build triggered metric details for metrics with state=true
+        let triggered_metric_details: Vec<MetricDetail> = ts_val
+            .iter()
+            .filter(|(_, &state)| state) // Only triggered (true) metrics
+            .filter_map(|(metric_name, _)| {
+                // Look up the metric definition
+                state.flag_metrics.get(metric_name).and_then(|metric_cfg| {
+                    metric_cfg.get(environment).map(|metric| MetricDetail {
+                        name: metric_name.clone(),
+                        query: metric.query.clone(),
+                        op: format!("{:?}", metric.op).to_lowercase(),
+                        threshold: metric.threshold,
+                    })
+                })
+            })
+            .collect();
+
+        result.push(ServiceHealthDataPoint {
+            timestamp: *ts,
+            weight: expression_res,
+            metric_states: ts_val.clone(),
+            matched_expression,
+            triggered_metric_details,
+        });
     }
 
     tracing::debug!("Summary data: {:?}, length={}", result, result.len());
@@ -621,7 +650,7 @@ mod tests {
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
         assert_eq!(
-            health_data[0].1, 100,
+            health_data[0].weight, 100,
             "Expression weight 100 should be returned when flag is true"
         );
     }
@@ -681,7 +710,7 @@ mod tests {
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
         assert_eq!(
-            health_data[0].1, 100,
+            health_data[0].weight, 100,
             "AND expression should return weight 100 when both flags are true"
         );
     }
@@ -740,7 +769,7 @@ mod tests {
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
         assert_eq!(
-            health_data[0].1, 0,
+            health_data[0].weight, 0,
             "AND expression should return weight 0 when one flag is false"
         );
     }
@@ -800,7 +829,7 @@ mod tests {
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
         assert_eq!(
-            health_data[0].1, 100,
+            health_data[0].weight, 100,
             "Should return highest matching weight (100)"
         );
     }
@@ -856,7 +885,7 @@ mod tests {
         let health_data = result.unwrap();
         assert_eq!(health_data.len(), 1, "Should have one datapoint");
         assert_eq!(
-            health_data[0].1, 0,
+            health_data[0].weight, 0,
             "Should return weight 0 when all expressions are false"
         );
     }
@@ -988,8 +1017,12 @@ mod tests {
         );
 
         // All values are < 5.0, so all should have weight 100
-        for (i, (_, weight)) in health_data.iter().enumerate() {
-            assert_eq!(*weight, 100, "Datapoint {} should have weight 100", i);
+        for (i, data_point) in health_data.iter().enumerate() {
+            assert_eq!(
+                data_point.weight, 100,
+                "Datapoint {} should have weight 100",
+                i
+            );
         }
     }
 

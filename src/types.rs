@@ -111,8 +111,37 @@ pub struct MetricData {
     #[serde(rename(serialize = "datapoints"))]
     pub points: MetricPoints,
 }
-/// List of the service health values (ts, data)
-pub type ServiceHealthData = Vec<(u32, u8)>;
+
+/// Health data point with diagnostic information
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServiceHealthDataPoint {
+    /// Timestamp
+    pub timestamp: u32,
+    /// Health weight/impact (0=healthy, 1=degraded, 2=outage)
+    pub weight: u8,
+    /// Individual metric states (metric_name -> true/false)
+    pub metric_states: HashMap<String, bool>,
+    /// The expression that matched (if any)
+    pub matched_expression: Option<String>,
+    /// Details of triggered metrics (only metrics with state=true)
+    pub triggered_metric_details: Vec<MetricDetail>,
+}
+
+/// Details of a triggered metric including its template configuration
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MetricDetail {
+    /// Metric name (e.g., "as.api_down")
+    pub name: String,
+    /// The Graphite query used
+    pub query: String,
+    /// Comparison operator (lt, gt, eq)
+    pub op: String,
+    /// Threshold value
+    pub threshold: f32,
+}
+
+/// List of the service health values with diagnostics
+pub type ServiceHealthData = Vec<ServiceHealthDataPoint>;
 
 pub enum CloudMonError {
     ServiceNotSupported,

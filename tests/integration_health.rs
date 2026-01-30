@@ -47,7 +47,7 @@ async fn test_integration_health_calculation_end_to_end() {
     // - "cpu || memory || error": true → weight 30
     // Highest matching expression = 50
     helpers::assert_health_score(
-        health_data[0].1,
+        health_data[0].weight,
         50,
         "cpu && memory should match since both resource metrics are true",
     );
@@ -90,7 +90,7 @@ async fn test_integration_complex_weighted_expressions() {
     // - cpu || memory || error: true → weight 30
     // Highest weight = 100
     helpers::assert_health_score(
-        health_data[0].1,
+        health_data[0].weight,
         100,
         "highest weight (100) when error_rate flag is true",
     );
@@ -163,7 +163,7 @@ async fn test_integration_edge_cases_empty_and_partial_data() {
     // - cpu || memory || error: true → 30
     // Highest = 100
     helpers::assert_health_score(
-        health_data2[0].1,
+        health_data2[0].weight,
         100,
         "Partial data should evaluate expressions correctly with missing metrics as false",
     );

@@ -363,7 +363,7 @@ pub async fn handler_render(
                     return (
                         StatusCode::OK,
                         Json(
-                            json!([{"target": target_parts[2], "datapoints": service_health_data.iter().map(|x| (Some(x.1 as f32), x.0)).collect::<Vec<(Option<f32>, u32)>>()}]),
+                            json!([{"target": target_parts[2], "datapoints": service_health_data.iter().map(|x| (Some(x.weight as f32), x.timestamp)).collect::<Vec<(Option<f32>, u32)>>()}]),
                         ),
                     );
                 }

@@ -43,7 +43,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!("Starting cloudmon-metrics-reporter");
+    tracing::info!("starting cloudmon-metrics-reporter");
 
     // Parse config
     let config = Config::new("config.yaml").unwrap();
@@ -73,11 +73,11 @@ async fn main() {
         _ = terminate => {},
     }
 
-    tracing::info!("Stopped cloudmon-metrics-reporting");
+    tracing::info!("stopped cloudmon-metrics-reporter");
 }
 
 async fn metric_watcher(config: &Config) {
-    tracing::info!("Starting metric reporter thread");
+    tracing::info!("starting metric reporter thread");
     // Init reqwest client
     let req_client: reqwest::Client = ClientBuilder::new()
         .timeout(Duration::from_secs(CLIENT_TIMEOUT_SECS))
@@ -133,7 +133,7 @@ async fn metric_watcher(config: &Config) {
         tracing::info!(
             attempt = attempt,
             max_attempts = max_attempts,
-            "Attempting to fetch components from Status Dashboard"
+            "attempting to fetch components from Status Dashboard"
         );
 
         match fetch_components(&req_client, &sdb_config.url, &headers).await {
@@ -141,7 +141,7 @@ async fn metric_watcher(config: &Config) {
                 tracing::info!(
                     attempt = attempt,
                     component_count = components.len(),
-                    "Successfully fetched components from Status Dashboard"
+                    "successfully fetched components from Status Dashboard"
                 );
                 component_cache = Some(build_component_id_cache(components));
                 break;
@@ -154,7 +154,7 @@ async fn metric_watcher(config: &Config) {
                         attempt = attempt,
                         max_attempts = max_attempts,
                         retry_delay_seconds = 60,
-                        "Failed to fetch components, will retry after delay"
+                        "failed to fetch components, will retry after delay"
                     );
                     // T025: 60-second delay between retry attempts
                     sleep(Duration::from_secs(60)).await;
@@ -164,7 +164,7 @@ async fn metric_watcher(config: &Config) {
                         error = %e,
                         attempt = attempt,
                         max_attempts = max_attempts,
-                        "Failed to fetch components after all retry attempts, reporter cannot start"
+                        "failed to fetch components after all retry attempts, reporter cannot start"
                     );
                 }
             }
@@ -175,7 +175,7 @@ async fn metric_watcher(config: &Config) {
     let mut component_cache = match component_cache {
         Some(cache) => cache,
         None => {
-            tracing::error!("Component cache initialization failed, exiting metric_watcher");
+            tracing::error!("component cache initialization failed, exiting metric_watcher");
             return;
         }
     };
@@ -187,7 +187,7 @@ async fn metric_watcher(config: &Config) {
             // For every component (health_metric service)
             for component in config.health_metrics.iter() {
                 tracing::trace!("Component {:?}", component.0);
-                // Query metric-convertor for the status
+                // Query metric-convertor for the status (includes metric states and matched expression)
                 match req_client
                     .get(format!(
                         "http://localhost:{}/api/v1/health",
@@ -213,8 +213,9 @@ async fn metric_watcher(config: &Config) {
                                     tracing::debug!("response {:?}", data);
                                     // Peek at last metric in the vector
                                     if let Some(last) = data.metrics.pop() {
-                                        // Is metric showing issues?
-                                        if last.1 > 0 {
+                                        // Is metric showing issues? (weight > 0 means degraded or outage)
+                                        let impact = last.weight;
+                                        if impact > 0 {
                                             let comp = components
                                                 .get(&env.name)
                                                 .unwrap()
@@ -231,7 +232,7 @@ async fn metric_watcher(config: &Config) {
                                                     component_name = comp.name.as_str(),
                                                     service = component.0.as_str(),
                                                     environment = env.name.as_str(),
-                                                    "Component not found in cache, attempting cache refresh"
+                                                    "component not found in cache, attempting cache refresh"
                                                 );
 
                                                 match fetch_components(
@@ -258,7 +259,7 @@ async fn metric_watcher(config: &Config) {
                                                         tracing::warn!(
                                                             error = %e,
                                                             component_name = comp.name.as_str(),
-                                                            "Failed to refresh component cache"
+                                                            "failed to refresh component cache"
                                                         );
                                                     }
                                                 }
@@ -267,14 +268,26 @@ async fn metric_watcher(config: &Config) {
                                             // Process component if found
                                             match component_id {
                                                 Some(id) => {
-                                                    // Build incident data
+                                                    // Build incident data with impact for Status Dashboard
                                                     let incident_data = build_incident_data(
                                                         id,
-                                                        last.1,
-                                                        last.0 as i64,
+                                                        impact,
+                                                        last.timestamp as i64,
                                                     );
 
-                                                    // Include full decision context: query parameters, metric value, and why incident is created
+                                                    // Format triggered metric details for logging
+                                                    let triggered_metrics: Vec<String> = last
+                                                        .triggered_metric_details
+                                                        .iter()
+                                                        .map(|m| {
+                                                            format!(
+                                                                "{}(query={}, op={}, threshold={})",
+                                                                m.name, m.query, m.op, m.threshold
+                                                            )
+                                                        })
+                                                        .collect();
+
+                                                    // Include full decision context: query parameters, metric details, matched expression
                                                     tracing::info!(
                                                         environment = env.name.as_str(),
                                                         service = component.0.as_str(),
@@ -282,11 +295,11 @@ async fn metric_watcher(config: &Config) {
                                                         component_id = id,
                                                         query_from = config.health_query.query_from.as_str(),
                                                         query_to = config.health_query.query_to.as_str(),
-                                                        metric_timestamp = last.0,
-                                                        metric_value = last.1,
-                                                        impact = last.1,
-                                                        reason = "metric value > 0 indicates health issue",
-                                                        "Creating incident: health metric indicates service degradation"
+                                                        metric_timestamp = last.timestamp,
+                                                        impact = impact,
+                                                        triggered_metrics = ?triggered_metrics,
+                                                        matched_expression = last.matched_expression.as_deref().unwrap_or("none"),
+                                                        "creating incident: health metric indicates service degradation"
                                                     );
 
                                                     // Create incident via V2 API
@@ -301,8 +314,8 @@ async fn metric_watcher(config: &Config) {
                                                         Ok(_) => {
                                                             tracing::info!(
                                                                 component_id = id,
-                                                                impact = last.1,
-                                                                "Incident created successfully"
+                                                                impact = impact,
+                                                                "incident created successfully"
                                                             );
                                                         }
                                                         Err(e) => {
@@ -312,7 +325,7 @@ async fn metric_watcher(config: &Config) {
                                                                 component_id = id,
                                                                 service = component.0.as_str(),
                                                                 environment = env.name.as_str(),
-                                                                "Failed to create incident"
+                                                                "failed to create incident"
                                                             );
                                                         }
                                                     }
@@ -323,7 +336,7 @@ async fn metric_watcher(config: &Config) {
                                                         component_name = comp.name.as_str(),
                                                         service = component.0.as_str(),
                                                         environment = env.name.as_str(),
-                                                        "Component not found in cache even after refresh, skipping incident creation"
+                                                        "component not found in cache even after refresh, skipping incident creation"
                                                     );
                                                     // Continue to next service (no retry on incident creation)
                                                     continue;
