@@ -19,7 +19,12 @@ pub fn webapp_cpu_response() -> serde_json::Value {
 }
 
 /// Health metrics response for api-service (cpu, memory, error_rate)
-pub fn api_service_health_response(cpu: f64, memory: f64, error_rate: f64, timestamp: i64) -> serde_json::Value {
+pub fn api_service_health_response(
+    cpu: f64,
+    memory: f64,
+    error_rate: f64,
+    timestamp: i64,
+) -> serde_json::Value {
     json!([
         {"target": "api-service.cpu_usage", "datapoints": [[cpu, timestamp]]},
         {"target": "api-service.memory_usage", "datapoints": [[memory, timestamp]]},
@@ -37,7 +42,11 @@ pub fn api_service_empty_response() -> serde_json::Value {
 }
 
 /// Health metrics response with partial data (some metrics missing datapoints)
-pub fn api_service_partial_response(cpu: f64, error_rate: f64, timestamp: i64) -> serde_json::Value {
+pub fn api_service_partial_response(
+    cpu: f64,
+    error_rate: f64,
+    timestamp: i64,
+) -> serde_json::Value {
     json!([
         {"target": "api-service.cpu_usage", "datapoints": [[cpu, timestamp]]},
         {"target": "api-service.memory_usage", "datapoints": []},

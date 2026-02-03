@@ -36,7 +36,7 @@ fn extract_yaml_blocks(content: &str) -> Vec<String> {
 #[test]
 fn validate_yaml_examples_parse() {
     let doc_root = Path::new("doc");
-    
+
     // Check if configuration examples exist
     let examples_path = doc_root.join("configuration/examples.md");
     if !examples_path.exists() {
@@ -44,8 +44,8 @@ fn validate_yaml_examples_parse() {
         return;
     }
 
-    let content = fs::read_to_string(&examples_path)
-        .expect("Failed to read configuration examples");
+    let content =
+        fs::read_to_string(&examples_path).expect("Failed to read configuration examples");
 
     let yaml_blocks = extract_yaml_blocks(&content);
     assert!(
@@ -68,17 +68,16 @@ fn validate_yaml_examples_parse() {
 #[test]
 fn validate_quickstart_examples() {
     let quickstart_path = Path::new("doc/getting-started/quickstart.md");
-    
+
     if !quickstart_path.exists() {
         eprintln!("Quickstart not yet created, skipping test");
         return;
     }
 
-    let content = fs::read_to_string(&quickstart_path)
-        .expect("Failed to read quickstart");
+    let content = fs::read_to_string(&quickstart_path).expect("Failed to read quickstart");
 
     let yaml_blocks = extract_yaml_blocks(&content);
-    
+
     for (i, yaml) in yaml_blocks.iter().enumerate() {
         let parsed: Result<Config, _> = serde_yaml::from_str(yaml);
         assert!(
@@ -99,8 +98,8 @@ fn validate_schema_exists_and_valid() {
         "config-schema.json not found. Run 'cargo build' to generate it."
     );
 
-    let schema_content = fs::read_to_string(schema_path)
-        .expect("Failed to read config-schema.json");
+    let schema_content =
+        fs::read_to_string(schema_path).expect("Failed to read config-schema.json");
 
     let schema: Result<Value, _> = serde_json::from_str(&schema_content);
     assert!(
@@ -129,8 +128,7 @@ fn validate_patterns_json() {
         "patterns.json not found in doc/schemas/"
     );
 
-    let patterns_content = fs::read_to_string(patterns_path)
-        .expect("Failed to read patterns.json");
+    let patterns_content = fs::read_to_string(patterns_path).expect("Failed to read patterns.json");
 
     let patterns: Result<Value, _> = serde_json::from_str(&patterns_content);
     assert!(
@@ -149,8 +147,7 @@ fn validate_schema_readme_exists() {
         "schemas/README.md not found in doc/schemas/"
     );
 
-    let readme_content = fs::read_to_string(readme_path)
-        .expect("Failed to read schemas/README.md");
+    let readme_content = fs::read_to_string(readme_path).expect("Failed to read schemas/README.md");
 
     assert!(
         readme_content.contains("config-schema.json"),
@@ -164,33 +161,33 @@ fn validate_documentation_structure() {
     let summary_path = Path::new("doc/SUMMARY.md");
     assert!(summary_path.exists(), "SUMMARY.md not found");
 
-    let summary_content = fs::read_to_string(summary_path)
-        .expect("Failed to read SUMMARY.md");
+    let summary_content = fs::read_to_string(summary_path).expect("Failed to read SUMMARY.md");
 
     // Extract markdown links
     let link_regex = regex::Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
-    
+
     for cap in link_regex.captures_iter(&summary_content) {
         let link = &cap[2];
-        
+
         // Skip external links
         if link.starts_with("http://") || link.starts_with("https://") {
             continue;
         }
 
         let _link_path = Path::new("doc").join(link);
-        
+
         // Only check links that should exist (not future placeholders)
-        if link.contains("getting-started") || 
-           link.contains("architecture") || 
-           link.contains("api") || 
-           link.contains("configuration") ||
-           link.contains("integration") ||
-           link.contains("modules") ||
-           link.contains("guides") ||
-           link == "index.md" ||
-           link == "convertor.md" ||
-           link == "reporter.md" {
+        if link.contains("getting-started")
+            || link.contains("architecture")
+            || link.contains("api")
+            || link.contains("configuration")
+            || link.contains("integration")
+            || link.contains("modules")
+            || link.contains("guides")
+            || link == "index.md"
+            || link == "convertor.md"
+            || link == "reporter.md"
+        {
             // We'll create these files, so just note them for now
             eprintln!("Link to be created: {}", link);
         }
@@ -202,7 +199,7 @@ fn validate_config_examples_conform_to_schema() {
     // This test will validate that configuration examples conform to the JSON schema
     // For now, we just ensure the schema is valid
     // Future: Use jsonschema crate to validate examples against schema
-    
+
     let schema_path = Path::new("doc/schemas/config-schema.json");
     assert!(schema_path.exists(), "Schema must exist");
 }

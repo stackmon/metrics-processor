@@ -4,6 +4,7 @@
 use crate::config::Config;
 use new_string_template::template::Template;
 use regex::Regex;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::collections::{BTreeMap, HashMap};
@@ -12,7 +13,7 @@ use std::time::Duration;
 
 use reqwest::ClientBuilder;
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum CmpType {
     Lt,
@@ -20,7 +21,7 @@ pub enum CmpType {
     Eq,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct BinaryMetricRawDef {
     pub query: String,
     pub op: CmpType,
@@ -37,7 +38,7 @@ impl Default for BinaryMetricRawDef {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct BinaryMetricDef {
     pub query: Option<String>,
     pub op: Option<CmpType>,
@@ -45,19 +46,19 @@ pub struct BinaryMetricDef {
     pub template: Option<MetricTemplateRef>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct MetricTemplateRef {
     pub name: String,
     pub vars: Option<HashMap<String, String>>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct EnvironmentDef {
     pub name: String,
     pub attributes: Option<HashMap<String, String>>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct FlagMetric {
     pub query: String,
     pub op: CmpType,
@@ -74,13 +75,13 @@ impl Default for FlagMetric {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct MetricExpressionDef {
     pub expression: String,
     pub weight: i32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct FlagMetricDef {
     pub name: String,
     pub service: String,
@@ -88,13 +89,13 @@ pub struct FlagMetricDef {
     pub environments: Vec<MetricEnvironmentDef>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct MetricEnvironmentDef {
     pub name: String,
     pub threshold: Option<f32>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct ServiceHealthDef {
     pub service: String,
     pub component_name: Option<String>,
@@ -110,8 +111,37 @@ pub struct MetricData {
     #[serde(rename(serialize = "datapoints"))]
     pub points: MetricPoints,
 }
-/// List of the service health values (ts, data)
-pub type ServiceHealthData = Vec<(u32, u8)>;
+
+/// Health data point with diagnostic information
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServiceHealthDataPoint {
+    /// Timestamp
+    pub timestamp: u32,
+    /// Health weight/impact (0=healthy, 1=degraded, 2=outage)
+    pub weight: u8,
+    /// Individual metric states (metric_name -> true/false)
+    pub metric_states: HashMap<String, bool>,
+    /// The expression that matched (if any)
+    pub matched_expression: Option<String>,
+    /// Details of triggered metrics (only metrics with state=true)
+    pub triggered_metric_details: Vec<MetricDetail>,
+}
+
+/// Details of a triggered metric including its template configuration
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MetricDetail {
+    /// Metric name (e.g., "as.api_down")
+    pub name: String,
+    /// The Graphite query used
+    pub query: String,
+    /// Comparison operator (lt, gt, eq)
+    pub op: String,
+    /// Threshold value
+    pub threshold: f32,
+}
+
+/// List of the service health values with diagnostics
+pub type ServiceHealthData = Vec<ServiceHealthDataPoint>;
 
 pub enum CloudMonError {
     ServiceNotSupported,
@@ -158,7 +188,7 @@ impl AppState {
         let timeout = Duration::from_secs(config.datasource.timeout as u64);
 
         Self {
-            config: config,
+            config,
             metric_templates: HashMap::new(),
             flag_metrics: HashMap::new(),
             req_client: ClientBuilder::new().timeout(timeout).build().unwrap(),
@@ -182,16 +212,17 @@ impl AppState {
                 let tmpl = self.metric_templates.get(&tmpl_ref.name).unwrap();
                 let tmpl_query = Template::new(tmpl.query.clone()).with_regex(&custom_regex);
                 for env in metric_def.environments.iter() {
-                    let mut raw = FlagMetric::default();
-                    raw.op = tmpl.op.clone();
-                    raw.threshold = match env.threshold {
-                        Some(x) => x,
-                        None => tmpl.threshold.clone(),
+                    let threshold = env.threshold.unwrap_or(tmpl.threshold);
+                    let raw = FlagMetric {
+                        query: String::new(), // Will be set below
+                        op: tmpl.op.clone(),
+                        threshold,
                     };
                     let vars: HashMap<&str, &str> = HashMap::from([
                         ("service", metric_def.service.as_str()),
                         ("environment", env.name.as_str()),
                     ]);
+                    let mut raw = raw;
                     raw.query = tmpl_query.render(&vars).unwrap();
                     if let Some(x) = self.flag_metrics.get_mut(&metric_name) {
                         x.insert(env.name.clone(), raw.clone());
@@ -227,7 +258,7 @@ impl AppState {
                     expression = expression.replace(k, v);
                 }
                 int_metric.expressions.push(MetricExpressionDef {
-                    expression: expression,
+                    expression,
                     weight: expr.weight,
                 });
             }
@@ -394,14 +425,29 @@ mod test {
         // Verify metric exists for all three environments
         let metric_key = "api.error-count";
         assert!(state.flag_metrics.contains_key(metric_key));
-        
-        let dev_metric = state.flag_metrics.get(metric_key).unwrap().get("dev").unwrap();
+
+        let dev_metric = state
+            .flag_metrics
+            .get(metric_key)
+            .unwrap()
+            .get("dev")
+            .unwrap();
         assert_eq!("dev.api.errors", dev_metric.query);
-        
-        let staging_metric = state.flag_metrics.get(metric_key).unwrap().get("staging").unwrap();
+
+        let staging_metric = state
+            .flag_metrics
+            .get(metric_key)
+            .unwrap()
+            .get("staging")
+            .unwrap();
         assert_eq!("staging.api.errors", staging_metric.query);
-        
-        let prod_metric = state.flag_metrics.get(metric_key).unwrap().get("production").unwrap();
+
+        let prod_metric = state
+            .flag_metrics
+            .get(metric_key)
+            .unwrap()
+            .get("production")
+            .unwrap();
         assert_eq!("production.api.errors", prod_metric.query);
     }
 
@@ -445,7 +491,7 @@ mod test {
             .get("dev")
             .unwrap();
         assert_eq!(5000.0, dev_metric.threshold);
-        
+
         // Verify production has override threshold of 500
         let prod_metric = state
             .flag_metrics
@@ -578,53 +624,62 @@ mod test {
     }
 }
 
-    /// Additional coverage test: Test CloudMonError Display implementation
-    #[test]
-    fn test_error_display() {
-        assert_eq!(
-            format!("{}", CloudMonError::ServiceNotSupported),
-            "Requested service not supported"
-        );
-        assert_eq!(
-            format!("{}", CloudMonError::EnvNotSupported),
-            "Environment for service not supported"
-        );
-        assert_eq!(
-            format!("{}", CloudMonError::ExpressionError),
-            "Internal Expression evaluation error"
-        );
-        assert_eq!(
-            format!("{}", CloudMonError::GraphiteError),
-            "Graphite error"
-        );
-    }
+/// Additional coverage test: Test CloudMonError Display implementation
+#[test]
+fn test_error_display() {
+    assert_eq!(
+        format!("{}", CloudMonError::ServiceNotSupported),
+        "Requested service not supported"
+    );
+    assert_eq!(
+        format!("{}", CloudMonError::EnvNotSupported),
+        "Environment for service not supported"
+    );
+    assert_eq!(
+        format!("{}", CloudMonError::ExpressionError),
+        "Internal Expression evaluation error"
+    );
+    assert_eq!(
+        format!("{}", CloudMonError::GraphiteError),
+        "Graphite error"
+    );
+}
 
-    /// Additional coverage test: Test CloudMonError Debug implementation
-    #[test]
-    fn test_error_debug() {
-        assert_eq!(
-            format!("{:?}", CloudMonError::ServiceNotSupported),
-            "Requested service not supported"
-        );
-        assert_eq!(
-            format!("{:?}", CloudMonError::EnvNotSupported),
-            "Environment for service not supported"
-        );
-        assert_eq!(
-            format!("{:?}", CloudMonError::ExpressionError),
-            "Internal Expression evaluation error"
-        );
-        assert_eq!(
-            format!("{:?}", CloudMonError::GraphiteError),
-            "Graphite error"
-        );
-    }
+/// Additional coverage test: Test CloudMonError Debug implementation
+#[test]
+fn test_error_debug() {
+    assert_eq!(
+        format!("{:?}", CloudMonError::ServiceNotSupported),
+        "Requested service not supported"
+    );
+    assert_eq!(
+        format!("{:?}", CloudMonError::EnvNotSupported),
+        "Environment for service not supported"
+    );
+    assert_eq!(
+        format!("{:?}", CloudMonError::ExpressionError),
+        "Internal Expression evaluation error"
+    );
+    assert_eq!(
+        format!("{:?}", CloudMonError::GraphiteError),
+        "Graphite error"
+    );
+}
 
-    /// Additional coverage test: Test BinaryMetricRawDef Default
-    #[test]
-    fn test_binary_metric_raw_def_default() {
-        let default = BinaryMetricRawDef::default();
-        assert_eq!(default.query, String::new());
-        assert_eq!(default.op, CmpType::Lt);
-        assert_eq!(default.threshold, 0.0);
-    }
+/// Additional coverage test: Test BinaryMetricRawDef Default
+#[test]
+fn test_binary_metric_raw_def_default() {
+    let default = BinaryMetricRawDef::default();
+    assert_eq!(default.query, String::new());
+    assert_eq!(default.op, CmpType::Lt);
+    assert_eq!(default.threshold, 0.0);
+}
+
+/// Additional coverage test: Test FlagMetric Default implementation
+#[test]
+fn test_flag_metric_default() {
+    let default = FlagMetric::default();
+    assert_eq!(default.query, String::new());
+    assert!(matches!(default.op, CmpType::Lt));
+    assert_eq!(default.threshold, 0.0);
+}

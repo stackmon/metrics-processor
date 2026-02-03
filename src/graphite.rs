@@ -92,14 +92,14 @@ where
 }
 
 pub fn get_graphite_routes() -> Router<AppState> {
-    return Router::new()
+    Router::new()
         .route("/functions", get(handler_functions))
         .route(
             "/metrics/find",
             get(handler_metrics_find_get).post(handler_metrics_find_post),
         )
         .route("/render", get(handler_render).post(handler_render))
-        .route("/tags/autoComplete/tags", get(handler_tags));
+        .route("/tags/autoComplete/tags", get(handler_tags))
 }
 
 /// Handler for graphite list supported functions API
@@ -206,7 +206,7 @@ pub fn find_metrics(find_request: MetricsQuery, state: AppState) -> Vec<Metric> 
         }
         tracing::debug!("Elements {:?}", target_parts);
     }
-    return metrics;
+    metrics
 }
 
 /// POST Handler for graphite find metrics API
@@ -217,13 +217,13 @@ pub async fn handler_metrics_find_post(
 ) -> impl IntoResponse {
     tracing::debug!("Processing find query={:?}", query);
     let metrics: Vec<Metric> = find_metrics(query, state);
-    return (
+    (
         StatusCode::OK,
         Json(json!(metrics
             .into_iter()
             .sorted_by(|a, b| Ord::cmp(&a.text, &b.text))
             .collect::<Vec<Metric>>())),
-    );
+    )
 }
 
 /// GET Handler for graphite find metrics API
@@ -234,13 +234,13 @@ pub async fn handler_metrics_find_get(
 ) -> impl IntoResponse {
     tracing::debug!("Processing find query={:?}", query);
     let metrics: Vec<Metric> = find_metrics(query, state);
-    return (
+    (
         StatusCode::OK,
         Json(json!(metrics
             .into_iter()
             .sorted_by(|a, b| Ord::cmp(&a.text, &b.text))
             .collect::<Vec<Metric>>())),
-    );
+    )
 }
 
 /// Handler for graphite render API
@@ -286,18 +286,15 @@ pub async fn handler_render(
                         }
                     }
                 } else if let Some(metric) = state.flag_metrics.get(&metric_name) {
-                    match metric.get(environment) {
-                        Some(m) => {
-                            graphite_targets.insert(metric_name.clone(), m.query.clone());
-                        }
-                        _ => {}
-                    };
+                    if let Some(m) = metric.get(environment) {
+                        graphite_targets.insert(metric_name.clone(), m.query.clone());
+                    }
                 }
                 tracing::debug!("Requesting Graphite {:?}", graphite_targets);
 
                 match get_graphite_data(
                     &state.req_client,
-                    &state.config.datasource.url.as_str(),
+                    state.config.datasource.url.as_str(),
                     &graphite_targets,
                     None,
                     from,
@@ -366,7 +363,7 @@ pub async fn handler_render(
                     return (
                         StatusCode::OK,
                         Json(
-                            json!([{"target": target_parts[2], "datapoints": service_health_data.iter().map(|x| (Some(x.1 as f32), x.0)).collect::<Vec<(Option<f32>, u32)>>()}]),
+                            json!([{"target": target_parts[2], "datapoints": service_health_data.iter().map(|x| (Some(x.weight as f32), x.timestamp)).collect::<Vec<(Option<f32>, u32)>>()}]),
                         ),
                     );
                 }
@@ -386,6 +383,7 @@ fn alias_graphite_query(query: &str, alias: &str) -> String {
 }
 
 /// Fetch required data from Graphite
+#[allow(clippy::too_many_arguments)]
 pub async fn get_graphite_data(
     client: &reqwest::Client,
     url: &str,
@@ -428,18 +426,18 @@ pub async fn get_graphite_data(
         Ok(rsp) => {
             if rsp.status().is_client_error() {
                 tracing::error!("Error: {:?}", rsp.text().await);
-                return Err(CloudMonError::GraphiteError);
+                Err(CloudMonError::GraphiteError)
             } else {
                 tracing::trace!("Status: {}", rsp.status());
                 tracing::trace!("Headers:\n{:#?}", rsp.headers());
                 match rsp.json().await {
-                    Ok(dt) => return Ok(dt),
-                    Err(_) => return Err(CloudMonError::GraphiteError),
+                    Ok(dt) => Ok(dt),
+                    Err(_) => Err(CloudMonError::GraphiteError),
                 }
             }
         }
-        Err(_) => return Err(CloudMonError::GraphiteError),
-    };
+        Err(_) => Err(CloudMonError::GraphiteError),
+    }
 }
 ///
 /// Handler for graphite tags API
@@ -667,26 +665,30 @@ mod test {
     async fn test_render_flag_target() {
         // Create mock Graphite server
         let mut server = mockito::Server::new();
-        
+
         // Mock the /render endpoint - returns raw metric data
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(json!([
-                {
-                    "target": "webapp.cpu-usage",
-                    "datapoints": [
-                        [85.0, 1609459200],  // > 80, should become 1
-                        [92.0, 1609459260],  // > 80, should become 1
-                        [78.0, 1609459320]   // <= 80, should become 0
-                    ]
-                }
-            ]).to_string())
+            .with_body(
+                json!([
+                    {
+                        "target": "webapp.cpu-usage",
+                        "datapoints": [
+                            [85.0, 1609459200],  // > 80, should become 1
+                            [92.0, 1609459260],  // > 80, should become 1
+                            [78.0, 1609459320]   // <= 80, should become 0
+                        ]
+                    }
+                ])
+                .to_string(),
+            )
             .create();
 
-        let config_str = format!("
+        let config_str = format!(
+            "
         datasource:
           url: '{}'
         server:
@@ -706,8 +708,10 @@ mod test {
             environments:
               - name: prod
         health_metrics: {{}}
-        ", server.url());
-        
+        ",
+            server.url()
+        );
+
         let config = config::Config::from_config_str(&config_str);
         let mut state = types::AppState::new(config);
         state.process_config();
@@ -721,58 +725,66 @@ mod test {
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
-        
+
         // Should return array with datapoints
         assert!(body.is_array());
         let arr = body.as_array().unwrap();
         assert_eq!(arr.len(), 1, "Should return one metric");
-        
+
         // Verify structure contains target and datapoints
         let first = &arr[0];
         assert!(first.get("target").is_some());
         assert!(first.get("datapoints").is_some());
-        
+
         // Datapoints should contain boolean values (0 or 1) after transformation
         let datapoints = first["datapoints"].as_array().unwrap();
         assert_eq!(datapoints.len(), 3, "Should have 3 datapoints");
-        
+
         for dp in datapoints {
             let point_arr = dp.as_array().unwrap();
             let value = point_arr[0].as_f64();
             if let Some(v) = value {
-                assert!(v == 0.0 || v == 1.0, "Flag values should be 0 or 1, got {}", v);
+                assert!(
+                    v == 0.0 || v == 1.0,
+                    "Flag values should be 0 or 1, got {}",
+                    v
+                );
             }
         }
     }
-    
+
     /// T054: Test /render with health target returns health scores
     /// Testing with mocked Graphite to verify health score calculation
     #[tokio::test]
     async fn test_render_health_target() {
         // Create mock Graphite server
         let mut server = mockito::Server::new();
-        
+
         // Mock the /render endpoint - returns raw metric data
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(json!([
-                {
-                    "target": "webapp.cpu-usage",
-                    "datapoints": [
-                        [85.0, 1609459200],  // > 80, flag=true, weight=2
-                        [90.0, 1609459260]   // > 80, flag=true, weight=2
-                    ]
-                }
-            ]).to_string())
+            .with_body(
+                json!([
+                    {
+                        "target": "webapp.cpu-usage",
+                        "datapoints": [
+                            [85.0, 1609459200],  // > 80, flag=true, weight=2
+                            [90.0, 1609459260]   // > 80, flag=true, weight=2
+                        ]
+                    }
+                ])
+                .to_string(),
+            )
             .create();
 
-        let config_str = format!("
+        let config_str = format!(
+            "
         datasource:
           url: '{}'
         server:
@@ -800,8 +812,10 @@ mod test {
             expressions:
               - expression: 'webapp.cpu_usage'
                 weight: 2
-        ", server.url());
-        
+        ",
+            server.url()
+        );
+
         let config = config::Config::from_config_str(&config_str);
         let mut state = types::AppState::new(config);
         state.process_config();
@@ -815,25 +829,25 @@ mod test {
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
-        
+
         // Should return array with datapoints
         assert!(body.is_array());
         let arr = body.as_array().unwrap();
         assert_eq!(arr.len(), 1, "Should return one metric");
-        
+
         // Verify structure contains target and datapoints
         let first = &arr[0];
         assert!(first.get("target").is_some());
         assert_eq!(first["target"], "webapp");
         assert!(first.get("datapoints").is_some());
-        
+
         // Health scores should be numeric weights (0, 1, 2, etc.)
         let datapoints = first["datapoints"].as_array().unwrap();
         assert!(datapoints.len() > 0, "Should have datapoints");
-        
+
         for dp in datapoints {
             let point_arr = dp.as_array().unwrap();
             let value = point_arr[0].as_f64();
@@ -870,7 +884,7 @@ mod test {
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body, json!([]));
@@ -903,7 +917,7 @@ mod test {
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body, json!({}));
@@ -933,7 +947,7 @@ mod test {
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body, json!([]));
@@ -943,7 +957,7 @@ mod test {
     #[test]
     fn test_graphite_4xx_error() {
         let mut server = mockito::Server::new();
-        
+
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
@@ -953,10 +967,10 @@ mod test {
 
         let timeout = Duration::from_secs(1);
         let req_client = ClientBuilder::new().timeout(timeout).build().unwrap();
-        
+
         let mut targets: HashMap<String, String> = HashMap::new();
         targets.insert("test".to_string(), "query".to_string());
-        
+
         let result = aw!(graphite::get_graphite_data(
             &req_client,
             &server.url(),
@@ -967,7 +981,7 @@ mod test {
             Some("now".to_string()),
             10,
         ));
-        
+
         assert!(result.is_err(), "Should return error for 404 response");
     }
 
@@ -975,7 +989,7 @@ mod test {
     #[test]
     fn test_graphite_5xx_error() {
         let mut server = mockito::Server::new();
-        
+
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
@@ -985,10 +999,10 @@ mod test {
 
         let timeout = Duration::from_secs(1);
         let req_client = ClientBuilder::new().timeout(timeout).build().unwrap();
-        
+
         let mut targets: HashMap<String, String> = HashMap::new();
         targets.insert("test".to_string(), "query".to_string());
-        
+
         let result = aw!(graphite::get_graphite_data(
             &req_client,
             &server.url(),
@@ -999,7 +1013,7 @@ mod test {
             Some("now".to_string()),
             10,
         ));
-        
+
         assert!(result.is_err(), "Should return error for 500 response");
     }
 
@@ -1007,7 +1021,7 @@ mod test {
     #[test]
     fn test_graphite_malformed_json() {
         let mut server = mockito::Server::new();
-        
+
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
@@ -1018,10 +1032,10 @@ mod test {
 
         let timeout = Duration::from_secs(1);
         let req_client = ClientBuilder::new().timeout(timeout).build().unwrap();
-        
+
         let mut targets: HashMap<String, String> = HashMap::new();
         targets.insert("test".to_string(), "query".to_string());
-        
+
         let result = aw!(graphite::get_graphite_data(
             &req_client,
             &server.url(),
@@ -1032,7 +1046,7 @@ mod test {
             Some("now".to_string()),
             10,
         ));
-        
+
         assert!(result.is_err(), "Should return error for malformed JSON");
     }
 
@@ -1042,10 +1056,10 @@ mod test {
         // Use a very short timeout to force timeout
         let timeout = Duration::from_millis(1);
         let req_client = ClientBuilder::new().timeout(timeout).build().unwrap();
-        
+
         let mut targets: HashMap<String, String> = HashMap::new();
         targets.insert("test".to_string(), "query".to_string());
-        
+
         // Use a non-routable IP to guarantee timeout
         let result = aw!(graphite::get_graphite_data(
             &req_client,
@@ -1057,7 +1071,7 @@ mod test {
             Some("now".to_string()),
             10,
         ));
-        
+
         assert!(result.is_err(), "Should return error for timeout");
     }
 
@@ -1065,29 +1079,32 @@ mod test {
     #[test]
     fn test_graphite_partial_response() {
         let mut server = mockito::Server::new();
-        
+
         // Return data for only some of the requested metrics
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(json!([
-                {
-                    "target": "metric1",
-                    "datapoints": [[10.0, 1609459200]]
-                }
-                // metric2 is missing from response
-            ]).to_string())
+            .with_body(
+                json!([
+                    {
+                        "target": "metric1",
+                        "datapoints": [[10.0, 1609459200]]
+                    }
+                    // metric2 is missing from response
+                ])
+                .to_string(),
+            )
             .create();
 
         let timeout = Duration::from_secs(1);
         let req_client = ClientBuilder::new().timeout(timeout).build().unwrap();
-        
+
         let mut targets: HashMap<String, String> = HashMap::new();
         targets.insert("metric1".to_string(), "query1".to_string());
         targets.insert("metric2".to_string(), "query2".to_string());
-        
+
         let result = aw!(graphite::get_graphite_data(
             &req_client,
             &server.url(),
@@ -1098,7 +1115,7 @@ mod test {
             Some("now".to_string()),
             10,
         ));
-        
+
         // Should successfully return data for available metrics
         assert!(result.is_ok(), "Should handle partial response gracefully");
         let data = result.unwrap();
@@ -1151,7 +1168,7 @@ mod test {
     #[tokio::test]
     async fn test_render_post() {
         let mut server = mockito::Server::new();
-        
+
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
@@ -1160,7 +1177,8 @@ mod test {
             .with_body(json!([]).to_string())
             .create();
 
-        let config_str = format!("
+        let config_str = format!(
+            "
         datasource:
           url: '{}'
         server:
@@ -1169,8 +1187,10 @@ mod test {
           - name: prod
         flag_metrics: []
         health_metrics: {{}}
-        ", server.url());
-        
+        ",
+            server.url()
+        );
+
         let config = config::Config::from_config_str(&config_str);
         let mut state = types::AppState::new(config);
         state.process_config();
@@ -1181,7 +1201,9 @@ mod test {
             .method("POST")
             .uri("/render")
             .header("content-type", "application/json")
-            .body(Body::from(r#"{"target": "invalid.target", "maxDataPoints": 10}"#))
+            .body(Body::from(
+                r#"{"target": "invalid.target", "maxDataPoints": 10}"#,
+            ))
             .unwrap();
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
@@ -1238,22 +1260,26 @@ mod test {
     #[tokio::test]
     async fn test_render_with_unknown_metric_in_response() {
         let mut server = mockito::Server::new();
-        
+
         // Mock returns a metric that doesn't exist in our config
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(json!([
-                {
-                    "target": "unknown.metric",
-                    "datapoints": [[85.0, 1609459200]]
-                }
-            ]).to_string())
+            .with_body(
+                json!([
+                    {
+                        "target": "unknown.metric",
+                        "datapoints": [[85.0, 1609459200]]
+                    }
+                ])
+                .to_string(),
+            )
             .create();
 
-        let config_str = format!("
+        let config_str = format!(
+            "
         datasource:
           url: '{}'
         server:
@@ -1273,8 +1299,10 @@ mod test {
             environments:
               - name: prod
         health_metrics: {{}}
-        ", server.url());
-        
+        ",
+            server.url()
+        );
+
         let config = config::Config::from_config_str(&config_str);
         let mut state = types::AppState::new(config);
         state.process_config();
@@ -1293,21 +1321,25 @@ mod test {
     #[tokio::test]
     async fn test_render_wildcard_metric() {
         let mut server = mockito::Server::new();
-        
+
         let _mock = server
             .mock("GET", "/render")
             .match_query(Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(json!([
-                {
-                    "target": "webapp.cpu-usage",
-                    "datapoints": [[85.0, 1609459200]]
-                }
-            ]).to_string())
+            .with_body(
+                json!([
+                    {
+                        "target": "webapp.cpu-usage",
+                        "datapoints": [[85.0, 1609459200]]
+                    }
+                ])
+                .to_string(),
+            )
             .create();
 
-        let config_str = format!("
+        let config_str = format!(
+            "
         datasource:
           url: '{}'
         server:
@@ -1327,8 +1359,10 @@ mod test {
             environments:
               - name: prod
         health_metrics: {{}}
-        ", server.url());
-        
+        ",
+            server.url()
+        );
+
         let config = config::Config::from_config_str(&config_str);
         let mut state = types::AppState::new(config);
         state.process_config();
@@ -1348,7 +1382,7 @@ mod test {
     #[tokio::test]
     async fn test_render_graphite_error() {
         let mut server = mockito::Server::new();
-        
+
         // Return an error status
         let _mock = server
             .mock("GET", "/render")
@@ -1357,7 +1391,8 @@ mod test {
             .with_body("Internal Server Error")
             .create();
 
-        let config_str = format!("
+        let config_str = format!(
+            "
         datasource:
           url: '{}'
         server:
@@ -1377,8 +1412,10 @@ mod test {
             environments:
               - name: prod
         health_metrics: {{}}
-        ", server.url());
-        
+        ",
+            server.url()
+        );
+
         let config = config::Config::from_config_str(&config_str);
         let mut state = types::AppState::new(config);
         state.process_config();

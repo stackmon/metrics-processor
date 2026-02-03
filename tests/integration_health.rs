@@ -1,5 +1,5 @@
 // Integration tests for service health calculation
-// 
+//
 // These tests verify end-to-end health calculation flows with mocked Graphite responses
 
 mod fixtures;
@@ -12,7 +12,7 @@ use fixtures::{graphite_responses, helpers};
 async fn test_integration_health_calculation_end_to_end() {
     let mut server = mockito::Server::new_async().await;
     let mock_url = server.url();
-    
+
     let state = helpers::create_health_test_state(&mock_url);
 
     // Mock Graphite response with all three metrics
@@ -31,11 +31,14 @@ async fn test_integration_health_calculation_end_to_end() {
         100,
     )
     .await;
-    
-    assert!(result.is_ok(), "End-to-end health calculation should succeed");
+
+    assert!(
+        result.is_ok(),
+        "End-to-end health calculation should succeed"
+    );
     let health_data = result.unwrap();
     assert_eq!(health_data.len(), 1, "Should have one datapoint");
-    
+
     // Error rate is 10.0 (> 5.0), so error_rate flag is false
     // CPU (50 < 80) and memory (60 < 90) are normal, so those flags are true
     // Expression evaluation:
@@ -44,9 +47,9 @@ async fn test_integration_health_calculation_end_to_end() {
     // - "cpu || memory || error": true → weight 30
     // Highest matching expression = 50
     helpers::assert_health_score(
-        health_data[0].1,
+        health_data[0].weight,
         50,
-        "cpu && memory should match since both resource metrics are true"
+        "cpu && memory should match since both resource metrics are true",
     );
 }
 
@@ -55,7 +58,7 @@ async fn test_integration_health_calculation_end_to_end() {
 async fn test_integration_complex_weighted_expressions() {
     let mut server = mockito::Server::new_async().await;
     let mock_url = server.url();
-    
+
     let state = helpers::create_health_test_state(&mock_url);
 
     // Mock Graphite response
@@ -74,19 +77,22 @@ async fn test_integration_complex_weighted_expressions() {
         100,
     )
     .await;
-    
-    assert!(result.is_ok(), "Complex weighted expressions should succeed");
+
+    assert!(
+        result.is_ok(),
+        "Complex weighted expressions should succeed"
+    );
     let health_data = result.unwrap();
-    
+
     // All flags are true:
     // - error_rate: 2.0 < 5.0 = true → weight 100
     // - cpu && memory: true && true = true → weight 50
     // - cpu || memory || error: true → weight 30
     // Highest weight = 100
     helpers::assert_health_score(
-        health_data[0].1,
+        health_data[0].weight,
         100,
-        "highest weight (100) when error_rate flag is true"
+        "highest weight (100) when error_rate flag is true",
     );
 }
 
@@ -95,7 +101,7 @@ async fn test_integration_complex_weighted_expressions() {
 async fn test_integration_edge_cases_empty_and_partial_data() {
     let mut server = mockito::Server::new_async().await;
     let mock_url = server.url();
-    
+
     let state = helpers::create_health_test_state(&mock_url);
 
     // Test 1: Empty datapoints array
@@ -113,12 +119,19 @@ async fn test_integration_edge_cases_empty_and_partial_data() {
         100,
     )
     .await;
-    
+
     // Empty datapoints should result in empty health data
-    assert!(result.is_ok(), "Empty datapoints should be handled gracefully");
+    assert!(
+        result.is_ok(),
+        "Empty datapoints should be handled gracefully"
+    );
     let health_data = result.unwrap();
-    assert_eq!(health_data.len(), 0, "Empty datapoints should produce empty result");
-    
+    assert_eq!(
+        health_data.len(),
+        0,
+        "Empty datapoints should produce empty result"
+    );
+
     // Test 2: Partial data (some metrics missing datapoints)
     let _mock2 = helpers::setup_graphite_render_mock_async(
         &mut server,
@@ -134,21 +147,24 @@ async fn test_integration_edge_cases_empty_and_partial_data() {
         100,
     )
     .await;
-    
+
     // Partial data: only metrics with datapoints are evaluated
     // Missing metrics default to false in expression context
     assert!(result2.is_ok(), "Partial data should be handled gracefully");
     let health_data2 = result2.unwrap();
-    assert!(health_data2.len() > 0, "Should have results for timestamps with partial data");
-    
+    assert!(
+        health_data2.len() > 0,
+        "Should have results for timestamps with partial data"
+    );
+
     // With cpu=true, memory=false (missing), error=true:
     // - error_rate alone: true → 100
     // - cpu && memory: true && false = false
     // - cpu || memory || error: true → 30
     // Highest = 100
     helpers::assert_health_score(
-        health_data2[0].1,
+        health_data2[0].weight,
         100,
-        "Partial data should evaluate expressions correctly with missing metrics as false"
+        "Partial data should evaluate expressions correctly with missing metrics as false",
     );
 }

@@ -18,12 +18,16 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-# Temporarily disabled linting and formatting checks, to be re-enabled later.
-#    - name: Check formatting
-#      run: make fmt-check
-#
-#    - name: Run linter
-#      run: make lint
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Check formatting
+      run: make fmt-check
+
+    - name: Run linter
+      run: make lint
 
     - name: Run tests
       run: make test
@@ -36,7 +40,6 @@ jobs:
     needs: test
     steps:
     - uses: actions/checkout@v4
-
 
     - name: Run tests with coverage
       run: make coverage-check

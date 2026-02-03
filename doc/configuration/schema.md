@@ -52,8 +52,8 @@ TSDB connection configuration.
 
 | Property | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
-| `url` | string | Yes | - | TSDB URL (e.g., `http://graphite:8080`) |
-| `timeout` | integer | No | `10` | Query timeout in seconds |
+| `url` | string | Yes | -       | TSDB URL (e.g., `http://graphite:8080`) |
+| `timeout` | integer | No | `2`     | Query timeout in seconds |
 
 ```yaml
 datasource:

@@ -110,7 +110,7 @@ lint-fix:
 # ============================================================================
 
 ## Build mdbook documentation
-doc:
+doc: doc-schema
 	mdbook build doc/
 
 ## Serve documentation locally with live reload
@@ -128,6 +128,10 @@ doc-api:
 ## Generate and open Rust API documentation in browser
 doc-api-open:
 	cargo doc --no-deps --open
+
+## Generate JSON schema for configuration
+doc-schema:
+	cargo test --lib -- generate_config_schema --ignored --nocapture
 
 ## Clean generated documentation
 doc-clean:
@@ -205,6 +209,7 @@ help:
 	@echo "    doc-open       - Build and open documentation in browser"
 	@echo "    doc-api        - Generate Rust API documentation"
 	@echo "    doc-api-open   - Generate and open Rust API docs in browser"
+	@echo "    doc-schema     - Generate JSON schema for configuration"
 	@echo "    doc-clean      - Clean generated documentation"
 	@echo ""
 	@echo "  Utilities:"

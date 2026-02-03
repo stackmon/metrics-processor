@@ -1,0 +1,38 @@
+services:
+  # go-carbon for metrics storage (Carbon replacement)
+  go-carbon:
+    image: ghcr.io/go-graphite/go-carbon:latest
+    container_name: metrics-processor-go-carbon
+    user: "0:0"  # Run as root to ensure write permissions
+    ports:
+      - "2003:2003"      # Carbon plaintext
+      - "2004:2004"      # Carbon pickle
+      - "7002:7002"      # Carbonserver (for carbonapi)
+    volumes:
+      - whisper_data:/data/graphite/whisper
+      - ./go-carbon.conf:/etc/go-carbon/go-carbon.conf:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2003"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # CarbonAPI for Graphite-compatible API
+  carbonapi:
+    image: quay.io/opentelekomcloud/carbonapi:v0.16.1
+    container_name: metrics-processor-carbonapi
+    ports:
+      - "8080:8080"      # Graphite API
+    volumes:
+      - ./carbonapi.yml:/etc/carbonapi.yml:ro
+    depends_on:
+      go-carbon:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/render?format=json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  whisper_data:

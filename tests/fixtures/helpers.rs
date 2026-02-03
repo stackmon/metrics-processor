@@ -3,17 +3,15 @@
 // Provides utilities for creating test state, mocking Graphite responses,
 // and custom assertions for clearer test failure messages
 
-use cloudmon_metrics::{
-    config::Config,
-    types::AppState,
-};
+use cloudmon_metrics::{config::Config, types::AppState};
 
 /// Creates a test AppState for API integration testing with multiple services
 ///
 /// # Arguments
 /// * `graphite_url` - URL of the mock Graphite server
 pub fn create_api_test_state(graphite_url: &str) -> AppState {
-    let config_str = format!(r#"
+    let config_str = format!(
+        r#"
         datasource:
           url: '{}'
         server:
@@ -43,7 +41,9 @@ pub fn create_api_test_state(graphite_url: &str) -> AppState {
             expressions:
               - expression: 'webapp.cpu_usage'
                 weight: 2
-    "#, graphite_url);
+    "#,
+        graphite_url
+    );
 
     let config = Config::from_config_str(&config_str);
     let mut state = AppState::new(config);
@@ -56,7 +56,8 @@ pub fn create_api_test_state(graphite_url: &str) -> AppState {
 /// # Arguments
 /// * `graphite_url` - URL of the mock Graphite server
 pub fn create_health_test_state(graphite_url: &str) -> AppState {
-    let config_str = format!(r#"
+    let config_str = format!(
+        r#"
         datasource:
           url: '{}'
         server:
@@ -110,7 +111,9 @@ pub fn create_health_test_state(graphite_url: &str) -> AppState {
                 weight: 50
               - expression: 'api_service.cpu_usage || api_service.memory_usage || api_service.error_rate'
                 weight: 30
-    "#, graphite_url);
+    "#,
+        graphite_url
+    );
 
     let config = Config::from_config_str(&config_str);
     let mut state = AppState::new(config);
@@ -136,7 +139,6 @@ pub fn assert_health_score(actual: u8, expected: u8, context: &str) {
         context, expected, actual
     );
 }
-
 
 /// Helper to setup a mockito mock with common Graphite query parameters
 ///

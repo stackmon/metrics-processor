@@ -1,0 +1,9 @@
+{
+  "title": "System incident from monitoring system",
+  "description": "System-wide incident affecting one or multiple components. Created automatically.",
+  "impact": 2,
+  "components": [218],
+  "start_date": "2025-01-22T10:30:44Z",
+  "system": true,
+  "type": "incident"
+}

@@ -26,12 +26,24 @@ This directory contains JSON Schema definitions and pattern documentation design
 // .vscode/settings.json
 {
   "yaml.schemas": {
-    "specs/001-project-documentation/contracts/config-schema.json": "config*.yaml"
+    "doc/schemas/config-schema.json": "config*.yaml"
   }
 }
 ```
 
-**Generated From**: Rust `Config` struct in `src/config.rs` (will be auto-generated via `schemars` crate in implementation)
+**Regenerating the Schema**:
+
+The schema is generated from the actual Rust `Config` struct in `src/config.rs` using the `schemars` crate. To regenerate after config changes:
+
+```bash
+# Using make
+make doc-schema
+
+# Or using cargo directly
+cargo test generate_config_schema -- --ignored --nocapture
+```
+
+This will update `doc/schemas/config-schema.json` with the latest schema.
 
 **Validation Rules**:
 - All required fields must be present (datasource, server, flag_metrics, health_metrics)

@@ -60,7 +60,7 @@ async fn main() -> Result<(), Error> {
     let config = Config::new("config.yaml").unwrap();
     let mut state = AppState::new(config);
     state.process_config();
-    let server_addr = state.config.get_socket_addr().clone();
+    let server_addr = state.config.get_socket_addr();
 
     // build our application with a single route
     let app = Router::new()

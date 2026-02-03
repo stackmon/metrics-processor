@@ -43,15 +43,15 @@ pub struct ServiceHealthResponse {
 
 /// Construct supported api v1 routes
 pub fn get_v1_routes() -> Router<AppState> {
-    return Router::new()
+    Router::new()
         .route("/", get(root))
         .route("/info", get(info))
-        .route("/health", get(handler_health));
+        .route("/health", get(handler_health))
 }
 
 /// Return API v1 root info
 async fn root() -> impl IntoResponse {
-    return (StatusCode::OK, Json(json!({"name": "v1"})));
+    (StatusCode::OK, Json(json!({"name": "v1"})))
 }
 
 /// Return v1 API infos
@@ -113,12 +113,12 @@ pub async fn handler_health(query: Query<HealthQuery>, State(state): State<AppSt
 #[cfg(test)]
 mod test {
     use super::*;
-    use axum::{body::Body, http::Request};
-    use serde_json::Value;
-    use tower::ServiceExt; // For ready() and call()
-    use tower::Service; // For call()
     use crate::config;
     use crate::types;
+    use axum::{body::Body, http::Request};
+    use serde_json::Value;
+    use tower::Service; // For call()
+    use tower::ServiceExt; // For ready() and call()
 
     /// T048: Test /api/v1/ root endpoint returns name
     #[tokio::test]
@@ -137,14 +137,11 @@ mod test {
         let state = types::AppState::new(config);
         let mut app = get_v1_routes().with_state(state);
 
-        let request = Request::builder()
-            .uri("/")
-            .body(Body::empty())
-            .unwrap();
+        let request = Request::builder().uri("/").body(Body::empty()).unwrap();
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body, serde_json::json!({"name": "v1"}));
@@ -167,14 +164,11 @@ mod test {
         let state = types::AppState::new(config);
         let mut app = get_v1_routes().with_state(state);
 
-        let request = Request::builder()
-            .uri("/info")
-            .body(Body::empty())
-            .unwrap();
+        let request = Request::builder().uri("/info").body(Body::empty()).unwrap();
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
         assert!(body_str.contains("V1 API of the CloudMon"));
@@ -185,25 +179,29 @@ mod test {
     async fn test_v1_health_valid_service() {
         // Create a mock Graphite server
         let mut server = mockito::Server::new();
-        
+
         // Mock the /render endpoint to return sample metric data
         let _mock = server
             .mock("GET", "/render")
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(serde_json::json!([
-                {
-                    "target": "test-metric",
-                    "datapoints": [
-                        [85.0, 1609459200],
-                        [90.0, 1609459260]
-                    ]
-                }
-            ]).to_string())
+            .with_body(
+                serde_json::json!([
+                    {
+                        "target": "test-metric",
+                        "datapoints": [
+                            [85.0, 1609459200],
+                            [90.0, 1609459260]
+                        ]
+                    }
+                ])
+                .to_string(),
+            )
             .create();
 
-        let config_str = format!("
+        let config_str = format!(
+            "
         datasource:
           url: '{}'
         server:
@@ -231,8 +229,10 @@ mod test {
             expressions:
               - expression: 'webapp.cpu_usage'
                 weight: 2
-        ", server.url());
-        
+        ",
+            server.url()
+        );
+
         let config = config::Config::from_config_str(&config_str);
         let mut state = types::AppState::new(config);
         state.process_config();
@@ -245,10 +245,10 @@ mod test {
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
-        
+
         // Verify response structure
         assert!(body.get("name").is_some());
         assert_eq!(body["name"], "webapp");
@@ -288,7 +288,7 @@ mod test {
 
         let response = app.ready().await.unwrap().call(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::CONFLICT);
-        
+
         let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert!(body["message"].as_str().unwrap().contains("not supported"));
@@ -322,4 +322,3 @@ mod test {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
-
