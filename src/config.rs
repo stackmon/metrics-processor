@@ -33,7 +33,20 @@
 //!     expressions:
 //!       - expression: 'a + b-c && d-e'
 //!         weight: 1
+//! status_dashboard:
+//!   url: 'https://status-dashboard.example.com'
+//!   secret: 'status-dashboard-jwt-secret'
+//!   jwt_preferred_username: 'operator-sd'
+//!   jwt_group: 'sd-operators'
 //! ```
+//!
+//! # Environment variables
+//! Configuration can be overridden with environment variables using the `MP_` prefix
+//! and `__` as separator for nested values. Examples:
+//! - `MP_STATUS_DASHBOARD__SECRET` - JWT signing secret
+//! - `MP_STATUS_DASHBOARD__JWT_PREFERRED_USERNAME` - JWT preferred_username claim
+//! - `MP_STATUS_DASHBOARD__JWT_GROUP` - JWT group claim (will be placed into groups array)
+//!
 
 use glob::glob;
 
@@ -177,6 +190,10 @@ pub struct StatusDashboardConfig {
     pub url: String,
     /// JWT token signature secret
     pub secret: Option<String>,
+    /// JWT token preferred_username claim
+    pub jwt_preferred_username: Option<String>,
+    /// JWT token group claim (will be placed into "groups" array in JWT payload)
+    pub jwt_group: Option<String>,
 }
 
 /// Health metrics query configuration

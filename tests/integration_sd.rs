@@ -473,17 +473,109 @@ fn test_multiple_components_same_name() {
 /// Test build_auth_headers - verify JWT token generation
 #[test]
 fn test_build_auth_headers() {
-    // Test with secret
-    let headers = build_auth_headers(Some("test-secret"));
+    // Test with secret only (no claims) - should not panic
+    let headers = build_auth_headers(Some("test-secret"), None, None);
     assert!(headers.contains_key(reqwest::header::AUTHORIZATION));
 
     let auth_value = headers.get(reqwest::header::AUTHORIZATION).unwrap();
     let auth_str = auth_value.to_str().unwrap();
     assert!(auth_str.starts_with("Bearer "));
 
-    // Test without secret (optional auth)
-    let headers_empty = build_auth_headers(None);
+    // Test without secret (optional auth) - should not panic
+    let headers_empty = build_auth_headers(None, None, None);
     assert!(!headers_empty.contains_key(reqwest::header::AUTHORIZATION));
+
+    // Test with secret and claims - should not panic
+    let headers_with_claims = build_auth_headers(
+        Some("test-secret"),
+        Some("operator-sd"),
+        Some("sd-operators"),
+    );
+    assert!(headers_with_claims.contains_key(reqwest::header::AUTHORIZATION));
+
+    // Test with only preferred_username (no group) - should not panic
+    let headers_username_only = build_auth_headers(Some("test-secret"), Some("operator-sd"), None);
+    assert!(headers_username_only.contains_key(reqwest::header::AUTHORIZATION));
+
+    // Test with only group (no preferred_username) - should not panic
+    let headers_group_only = build_auth_headers(Some("test-secret"), None, Some("sd-operators"));
+    assert!(headers_group_only.contains_key(reqwest::header::AUTHORIZATION));
+}
+
+/// Test build_auth_headers with claims - verify JWT payload structure
+#[test]
+fn test_build_auth_headers_with_claims() {
+    use base64::{engine::general_purpose, Engine as _};
+
+    // Generate token with all claims
+    let headers = build_auth_headers(
+        Some("test-secret"),
+        Some("operator-sd"),
+        Some("sd-operators"),
+    );
+
+    let auth_value = headers.get(reqwest::header::AUTHORIZATION).unwrap();
+    let auth_str = auth_value.to_str().unwrap();
+    let token = &auth_str[7..];
+
+    let parts: Vec<&str> = token.split('.').collect();
+    assert_eq!(parts.len(), 3, "JWT should have 3 parts");
+
+    let payload_decoded = general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .expect("Failed to decode JWT payload");
+    let payload_str = String::from_utf8(payload_decoded).expect("Failed to parse payload as UTF-8");
+    let payload: serde_json::Value =
+        serde_json::from_str(&payload_str).expect("Failed to parse payload as JSON");
+
+    assert_eq!(
+        payload.get("preferred_username").and_then(|v| v.as_str()),
+        Some("operator-sd"),
+        "preferred_username should be 'operator-sd'"
+    );
+
+    // Verify groups claim is an array with single element
+    let groups = payload.get("groups").expect("groups claim should exist");
+    assert!(groups.is_array(), "groups should be an array");
+    let groups_array = groups.as_array().expect("groups should be array");
+    assert_eq!(groups_array.len(), 1, "groups array should have 1 element");
+    assert_eq!(
+        groups_array[0].as_str(),
+        Some("sd-operators"),
+        "groups[0] should be 'sd-operators'"
+    );
+}
+
+/// Test build_auth_headers without claims - verify empty payload is valid JWT
+#[test]
+fn test_build_auth_headers_without_claims() {
+    use base64::{engine::general_purpose, Engine as _};
+
+    // Generate token without claims (backward compatibility)
+    let headers = build_auth_headers(Some("test-secret"), None, None);
+
+    let auth_value = headers.get(reqwest::header::AUTHORIZATION).unwrap();
+    let auth_str = auth_value.to_str().unwrap();
+    let token = &auth_str[7..]; // Remove "Bearer " prefix
+
+    // Split JWT into parts
+    let parts: Vec<&str> = token.split('.').collect();
+    assert_eq!(parts.len(), 3, "JWT should have 3 parts");
+
+    // Decode payload (second part)
+    let payload_decoded = general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .expect("Failed to decode JWT payload");
+    let payload_str = String::from_utf8(payload_decoded).expect("Failed to parse payload as UTF-8");
+    let payload: serde_json::Value =
+        serde_json::from_str(&payload_str).expect("Failed to parse payload as JSON");
+
+    // Verify payload is empty object (no claims)
+    assert!(payload.is_object(), "payload should be an object");
+    assert!(
+        payload.as_object().unwrap().is_empty(),
+        "payload should be empty when no claims provided"
+    );
 }
 
 /// Test create_incident failure - verify error handling when API returns error

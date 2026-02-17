@@ -138,18 +138,34 @@ Incidents are created with static, secure payloads:
 
 ### 5. Authentication
 
-The reporter uses HMAC-JWT for authentication (unchanged from V1):
+The reporter uses HMAC-JWT for authentication with optional claims:
 
 ```rust
-// Generate HMAC-JWT token
-let headers = build_auth_headers(secret.as_deref());
+// Generate HMAC-JWT token with optional claims
+let headers = build_auth_headers(
+    secret.as_deref(),
+    preferred_username.as_deref(),
+    group.as_deref(),
+);
 // Headers contain: Authorization: Bearer <jwt-token>
 ```
 
 **Token Format**:
 - Algorithm: HMAC-SHA256
-- Claims: `{"stackmon": "dummy"}`
+- Claims (when configured):
+  - `preferred_username`: User identifier for audit logging
+  - `groups`: Array containing single group for authorization
 - Optional: No secret = no auth header (for environments without auth)
+
+**Example JWT Payload** (with all claims configured):
+```json
+{
+  "preferred_username": "operator-sd",
+  "groups": ["sd-operators"]
+}
+```
+
+**Backward Compatibility**: If `jwt_preferred_username` and `jwt_group` are not configured, the JWT payload will be empty (same behavior as before).
 
 ## Module Structure
 
@@ -166,7 +182,11 @@ pub struct IncidentData { title, description, impact, components, start_date, sy
 pub type ComponentCache = HashMap<(String, Vec<ComponentAttribute>), u32>;
 
 // Authentication
-pub fn build_auth_headers(secret: Option<&str>) -> HeaderMap
+pub fn build_auth_headers(
+    secret: Option<&str>,
+    preferred_username: Option<&str>,
+    group: Option<&str>,
+) -> HeaderMap
 
 // V2 API Functions
 pub async fn fetch_components(...) -> Result<Vec<StatusDashboardComponent>>
@@ -194,12 +214,16 @@ convertor:
 status_dashboard:
   url: "https://dashboard.example.com"
   secret: "your-jwt-secret"
+  jwt_preferred_username: "operator-sd"  # Optional: user identifier for JWT
+  jwt_group: "sd-operators"              # Optional: group for authorization
 ```
 
-| Property | Type   | Required | Default | Description                           |
-|----------|--------|----------|---------|---------------------------------------|
-| `url`    | string | Yes      | -       | Status Dashboard API URL              |
-| `secret` | string | No       | -       | JWT signing secret for authentication |
+| Property               | Type   | Required | Default | Description                                      |
+|------------------------|--------|----------|---------|--------------------------------------------------|
+| `url`                  | string | Yes      | -       | Status Dashboard API URL                         |
+| `secret`               | string | No       | -       | JWT signing secret for authentication            |
+| `jwt_preferred_username` | string | No     | -       | Username claim for JWT (audit logging)           |
+| `jwt_group`            | string | No       | -       | Group claim for JWT (placed into `groups` array) |
 
 ### Health Query Configuration
 
@@ -282,7 +306,9 @@ spec:
 Override configuration:
 
 ```bash
-MP_STATUS_DASHBOARD__SECRET=new-secret \
+MP_STATUS_DASHBOARD__SECRET=status-dashboard-secret \
+MP_STATUS_DASHBOARD__JWT_PREFERRED_USERNAME=operator-sd \
+MP_STATUS_DASHBOARD__JWT_GROUP=sd-operators \
 MP_CONVERTOR__URL=http://convertor-svc:3005 \
 cloudmon-metrics-reporter --config config.yaml
 ```
