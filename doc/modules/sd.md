@@ -93,18 +93,33 @@ Key: `(component_name, sorted_attributes)` → Value: `component_id`
 #### `build_auth_headers`
 
 ```rust
-pub fn build_auth_headers(secret: Option<&str>) -> HeaderMap
+pub fn build_auth_headers(
+    secret: Option<&str>,
+    preferred_username: Option<&str>,
+    group: Option<&str>,
+) -> HeaderMap
 ```
 
 Generates HMAC-JWT authorization headers for Status Dashboard API.
 
 - Creates Bearer token using HMAC-SHA256 signing
 - Returns empty HeaderMap if no secret provided (optional auth)
+- Optionally includes `preferred_username` claim for audit logging
+- Optionally includes `groups` array claim with single group for authorization
 
 **Example**:
 ```rust
-let headers = build_auth_headers(Some("my-secret"));
-// Headers contain: Authorization: Bearer eyJ...
+// With claims
+let headers = build_auth_headers(
+    Some("status-dashboard-secret"),
+    Some("operator-sd"),
+    Some("sd-operators"),
+);
+// JWT payload: {"preferred_username": "operator-sd", "groups": ["sd-operators"]}
+
+// Without claims (backward compatible)
+let headers = build_auth_headers(Some("my-secret"), None, None);
+// JWT payload: {}
 ```
 
 ### Component Management
@@ -184,8 +199,12 @@ use cloudmon_metrics::sd::{
     Component, ComponentAttribute,
 };
 
-// Build auth headers
-let headers = build_auth_headers(config.secret.as_deref());
+// Build auth headers with optional claims
+let headers = build_auth_headers(
+    config.jwt_secret.as_deref(),
+    config.claim_preferred_username.as_deref(),
+    config.claim_group.as_deref(),
+);
 
 // Fetch and cache components
 let components = fetch_components(&client, &url, &headers).await?;

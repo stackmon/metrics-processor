@@ -195,12 +195,12 @@ Optional status dashboard integration.
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
 | `url` | string | Yes | Status dashboard URL |
-| `secret` | string | No | JWT signing secret |
+| `jwt_secret` | string | No | JWT signing secret |
 
 ```yaml
 status_dashboard:
   url: "https://status.example.com"
-  secret: "your-jwt-secret"  # Use MP_STATUS_DASHBOARD__SECRET env var instead
+  jwt_secret: "your-jwt-secret"  # Use MP_STATUS_DASHBOARD__JWT_SECRET env var instead
 ```
 
 ## Comparison Operators

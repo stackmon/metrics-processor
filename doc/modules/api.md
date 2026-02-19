@@ -127,7 +127,7 @@ The `AppState` contains:
 
 ## Authentication
 
-Currently, the API does not implement authentication. The `status_dashboard.secret` configuration option suggests JWT-based authentication may be planned for integration with status dashboard services.
+Currently, the API does not implement authentication. The `status_dashboard.jwt_secret` configuration option suggests JWT-based authentication may be planned for integration with status dashboard services.
 
 ## Integration with Other Modules
 
