@@ -94,7 +94,7 @@ docker run -d \
   --network host \
   -v $(pwd)/config:/cloudmon/config:ro \
   -e RUST_LOG=info \
-  -e MP_STATUS_DASHBOARD__SECRET=your-jwt-secret \
+  -e MP_STATUS_DASHBOARD__JWT_SECRET=your-jwt-secret \
   metrics-processor:latest \
   /cloudmon/cloudmon-metrics-reporter
 ```
@@ -130,7 +130,7 @@ services:
       - ./config:/cloudmon/config:ro
     environment:
       - RUST_LOG=info
-      - MP_STATUS_DASHBOARD__SECRET=${STATUS_DASHBOARD_SECRET}
+      - MP_STATUS_DASHBOARD__JWT_SECRET=${STATUS_DASHBOARD_SECRET}
     depends_on:
       convertor:
         condition: service_healthy
@@ -343,7 +343,7 @@ spec:
           env:
             - name: RUST_LOG
               value: "info"
-            - name: MP_STATUS_DASHBOARD__SECRET
+            - name: MP_STATUS_DASHBOARD__JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: metrics-processor-secrets
@@ -462,7 +462,7 @@ Override configuration values using environment variables prefixed with `MP_`:
 
 ```bash
 # Override status dashboard secret
-export MP_STATUS_DASHBOARD__SECRET=production-secret
+export MP_STATUS_DASHBOARD__JWT_SECRET=production-secret
 
 # Override datasource URL
 export MP_DATASOURCE__URL=https://graphite-prod.example.com

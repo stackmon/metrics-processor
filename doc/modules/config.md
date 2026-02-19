@@ -94,7 +94,7 @@ Environment variables use `MP_` prefix with `__` as sublevel separator:
 |---------------------|-------------|
 | `MP_DATASOURCE__URL` | `datasource.url` |
 | `MP_SERVER__PORT` | `server.port` |
-| `MP_STATUS_DASHBOARD__SECRET` | `status_dashboard.secret` |
+| `MP_STATUS_DASHBOARD__JWT_SECRET` | `status_dashboard.jwt_secret` |
 
 ```rust
 Environment::with_prefix("MP")
@@ -163,7 +163,7 @@ health_metrics:
 
 status_dashboard:
   url: 'https://status.example.com'
-  secret: ${MP_STATUS_DASHBOARD__SECRET}
+  jwt_secret: ${MP_STATUS_DASHBOARD__JWT_SECRET}
 ```
 
 ### Modular Configuration (conf.d)

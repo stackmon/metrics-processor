@@ -256,8 +256,8 @@ src/
 
 ```bash
 # Environment variable example
-MP_STATUS_DASHBOARD__SECRET=my-jwt-secret
-# Translates to: status_dashboard.secret = "my-jwt-secret"
+MP_STATUS_DASHBOARD__JWT_SECRET=my-jwt-secret
+# Translates to: status_dashboard.jwt_secret = "my-jwt-secret"
 ```
 
 ## Security Considerations

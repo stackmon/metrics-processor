@@ -122,9 +122,9 @@ async fn metric_watcher(config: &Config) {
     // Build authorization headers using status_dashboard module (T021, T022, T023 - US3)
     // VERIFIED: Existing HMAC-JWT mechanism works unchanged with V2 endpoints
     let headers = build_auth_headers(
-        sdb_config.secret.as_deref(),
-        sdb_config.jwt_preferred_username.as_deref(),
-        sdb_config.jwt_group.as_deref(),
+        sdb_config.jwt_secret.as_deref(),
+        sdb_config.claim_preferred_username.as_deref(),
+        sdb_config.claim_group.as_deref(),
     );
 
     // Initialize component ID cache at startup with retry logic (T024, T025, T026, T027)

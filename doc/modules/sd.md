@@ -201,9 +201,9 @@ use cloudmon_metrics::sd::{
 
 // Build auth headers with optional claims
 let headers = build_auth_headers(
-    config.secret.as_deref(),
-    config.jwt_preferred_username.as_deref(),
-    config.jwt_group.as_deref(),
+    config.jwt_secret.as_deref(),
+    config.claim_preferred_username.as_deref(),
+    config.claim_group.as_deref(),
 );
 
 // Fetch and cache components

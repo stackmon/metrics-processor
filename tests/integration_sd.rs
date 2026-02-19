@@ -488,17 +488,18 @@ fn test_build_auth_headers() {
     // Test with secret and claims - should not panic
     let headers_with_claims = build_auth_headers(
         Some("test-secret"),
-        Some("operator-sd"),
-        Some("sd-operators"),
+        Some("sd-username"),
+        Some("operators-sd-group"),
     );
     assert!(headers_with_claims.contains_key(reqwest::header::AUTHORIZATION));
 
     // Test with only preferred_username (no group) - should not panic
-    let headers_username_only = build_auth_headers(Some("test-secret"), Some("operator-sd"), None);
+    let headers_username_only = build_auth_headers(Some("test-secret"), Some("sd-username"), None);
     assert!(headers_username_only.contains_key(reqwest::header::AUTHORIZATION));
 
     // Test with only group (no preferred_username) - should not panic
-    let headers_group_only = build_auth_headers(Some("test-secret"), None, Some("sd-operators"));
+    let headers_group_only =
+        build_auth_headers(Some("test-secret"), None, Some("operators-sd-group"));
     assert!(headers_group_only.contains_key(reqwest::header::AUTHORIZATION));
 }
 
@@ -510,8 +511,8 @@ fn test_build_auth_headers_with_claims() {
     // Generate token with all claims
     let headers = build_auth_headers(
         Some("test-secret"),
-        Some("operator-sd"),
-        Some("sd-operators"),
+        Some("sd-username"),
+        Some("operators-sd-group"),
     );
 
     let auth_value = headers.get(reqwest::header::AUTHORIZATION).unwrap();
@@ -530,8 +531,8 @@ fn test_build_auth_headers_with_claims() {
 
     assert_eq!(
         payload.get("preferred_username").and_then(|v| v.as_str()),
-        Some("operator-sd"),
-        "preferred_username should be 'operator-sd'"
+        Some("sd-username"),
+        "preferred_username should be 'sd-username'"
     );
 
     // Verify groups claim is an array with single element
@@ -541,8 +542,8 @@ fn test_build_auth_headers_with_claims() {
     assert_eq!(groups_array.len(), 1, "groups array should have 1 element");
     assert_eq!(
         groups_array[0].as_str(),
-        Some("sd-operators"),
-        "groups[0] should be 'sd-operators'"
+        Some("operators-sd-group"),
+        "groups[0] should be 'operators-sd-group'"
     );
 }
 

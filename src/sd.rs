@@ -12,6 +12,9 @@ use serde_json;
 use sha2::Sha256;
 use std::collections::HashMap;
 
+const CLAIM_PREFERRED_USERNAME: &str = "preferred_username";
+const CLAIM_GROUP: &str = "group";
+
 /// Component attribute (key-value pair) for identifying components
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct ComponentAttribute {
@@ -86,7 +89,7 @@ pub fn build_auth_headers(
         // Add preferred_username if provided
         if let Some(username) = preferred_username {
             claims_map.insert(
-                "preferred_username".to_string(),
+                CLAIM_PREFERRED_USERNAME.to_string(),
                 serde_json::Value::String(username.to_string()),
             );
         }
@@ -94,7 +97,10 @@ pub fn build_auth_headers(
         // Add group as array if provided (Status Dashboard expects "groups" claim name)
         if let Some(group_value) = group {
             let groups_json = vec![serde_json::Value::String(group_value.to_string())];
-            claims_map.insert("groups".to_string(), serde_json::Value::Array(groups_json));
+            claims_map.insert(
+                CLAIM_GROUP.to_string(),
+                serde_json::Value::Array(groups_json),
+            );
         }
 
         let claims = serde_json::Value::Object(claims_map);
