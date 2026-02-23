@@ -13,7 +13,7 @@ use sha2::Sha256;
 use std::collections::HashMap;
 
 const CLAIM_PREFERRED_USERNAME: &str = "preferred_username";
-const CLAIM_GROUP: &str = "group";
+const CLAIM_GROUP: &str = "groups";
 
 /// Component attribute (key-value pair) for identifying components
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
