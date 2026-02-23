@@ -596,7 +596,7 @@ server:
 
 status_dashboard:
   url: "https://status.example.com"
-  # Secret should be set via MP_STATUS_DASHBOARD__SECRET environment variable
+  # Secret should be set via MP_STATUS_DASHBOARD__JWT_SECRET environment variable
 
 metric_templates:
   api_latency:

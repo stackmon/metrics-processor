@@ -138,18 +138,34 @@ Incidents are created with static, secure payloads:
 
 ### 5. Authentication
 
-The reporter uses HMAC-JWT for authentication (unchanged from V1):
+The reporter uses HMAC-JWT for authentication with optional claims:
 
 ```rust
-// Generate HMAC-JWT token
-let headers = build_auth_headers(secret.as_deref());
+// Generate HMAC-JWT token with optional claims
+let headers = build_auth_headers(
+    secret.as_deref(),
+    preferred_username.as_deref(),
+    group.as_deref(),
+);
 // Headers contain: Authorization: Bearer <jwt-token>
 ```
 
 **Token Format**:
 - Algorithm: HMAC-SHA256
-- Claims: `{"stackmon": "dummy"}`
+- Claims (when configured):
+  - `preferred_username`: User identifier for audit logging
+  - `groups`: Array containing single group for authorization
 - Optional: No secret = no auth header (for environments without auth)
+
+**Example JWT Payload** (with all claims configured):
+```json
+{
+  "preferred_username": "sd-username",
+  "groups": ["operators-sd-group", "group_1", "group_2"]
+}
+```
+
+**Backward Compatibility**: If `claim_preferred_username` and `claim_group` are not configured, the JWT payload will be empty (same behavior as before).
 
 ## Module Structure
 
@@ -166,7 +182,11 @@ pub struct IncidentData { title, description, impact, components, start_date, sy
 pub type ComponentCache = HashMap<(String, Vec<ComponentAttribute>), u32>;
 
 // Authentication
-pub fn build_auth_headers(secret: Option<&str>) -> HeaderMap
+pub fn build_auth_headers(
+    secret: Option<&str>,
+    preferred_username: Option<&str>,
+    group: Option<&str>,
+) -> HeaderMap
 
 // V2 API Functions
 pub async fn fetch_components(...) -> Result<Vec<StatusDashboardComponent>>
@@ -193,13 +213,17 @@ convertor:
 ```yaml
 status_dashboard:
   url: "https://dashboard.example.com"
-  secret: "your-jwt-secret"
+  jwt_secret: "your-jwt-secret"
+  claim_preferred_username: "sd-username"  # Optional: user identifier for JWT
+  claim_group: "operators-sd-group"              # Optional: group for authorization
 ```
 
-| Property | Type   | Required | Default | Description                           |
-|----------|--------|----------|---------|---------------------------------------|
-| `url`    | string | Yes      | -       | Status Dashboard API URL              |
-| `secret` | string | No       | -       | JWT signing secret for authentication |
+| Property               | Type   | Required | Default | Description                                      |
+|------------------------|--------|----------|---------|--------------------------------------------------|
+| `url`                  | string | Yes      | -       | Status Dashboard API URL                         |
+| `jwt_secret`           | string | No       | -       | JWT signing secret for authentication            |
+| `claim_preferred_username` | string | No     | -       | Username claim for JWT (audit logging)           |
+| `claim_group`            | string | No       | -       | Group claim for JWT (placed into `groups` array) |
 
 ### Health Query Configuration
 
@@ -282,7 +306,9 @@ spec:
 Override configuration:
 
 ```bash
-MP_STATUS_DASHBOARD__SECRET=new-secret \
+MP_STATUS_DASHBOARD__JWT_SECRET=status-dashboard-secret \
+MP_STATUS_DASHBOARD__CLAIM_PREFERRED_USERNAME=sd-username \
+MP_STATUS_DASHBOARD__CLAIM_GROUP=operators-sd-group \
 MP_CONVERTOR__URL=http://convertor-svc:3005 \
 cloudmon-metrics-reporter --config config.yaml
 ```
@@ -391,7 +417,7 @@ When the reporter decides to create an incident, it logs all the information nee
 ### Authentication Failures
 
 **Cause**: Invalid JWT secret
-**Solution**: Update `status_dashboard.secret` in configuration
+**Solution**: Update `status_dashboard.jwt_secret` in configuration
 
 ## Use Cases
 
@@ -430,7 +456,7 @@ curl http://localhost:3005/v1/health?service=api&environment=prod&from=2024-01-0
 ### "Dashboard authentication failed"
 
 **Cause**: Invalid JWT secret
-**Solution**: Ensure `status_dashboard.secret` matches dashboard configuration
+**Solution**: Ensure `status_dashboard.jwt_secret` matches dashboard configuration
 
 ### "No services being polled"
 
