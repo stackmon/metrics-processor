@@ -24,14 +24,6 @@ pub struct Component {
     pub attributes: Vec<ComponentAttribute>,
 }
 
-/// Component status for V1 API (legacy, deprecated - use V2 IncidentData instead)
-#[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct ComponentStatus {
-    pub name: String,
-    pub impact: u8,
-    pub attributes: Vec<ComponentAttribute>,
-}
-
 /// Component data from Status Dashboard API V2 GET /v2/components response
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct StatusDashboardComponent {

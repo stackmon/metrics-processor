@@ -19,21 +19,11 @@ use reqwest::ClientBuilder;
 use tokio::signal;
 use tokio::time::{sleep, Duration};
 
-use serde::{Deserialize, Serialize};
-
 use std::collections::HashMap;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const CLIENT_TIMEOUT_SECS: u64 = 2;
-
-/// Component status for V1 API (legacy, will be replaced)
-#[derive(Deserialize, Serialize, Debug)]
-pub struct ComponentStatus {
-    pub name: String,
-    pub impact: u8,
-    pub attributes: Vec<ComponentAttribute>,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
