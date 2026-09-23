@@ -313,7 +313,7 @@ flowchart TD
     Parse["Parse Response"]
     Check{"Last value > 0?"}
     Skip["Skip notification"]
-    Build["Build ComponentStatus"]
+    Build["Build IncidentData"]
     Post["POST to Dashboard"]
     
     Poll --> Parse
@@ -340,7 +340,7 @@ if let Some(last) = data.metrics.pop() {
 
 ```http
 POST /v1/component_status
-Authorization: Bearer <jwt_token>
+Authorization: Bearer <access_token>
 Content-Type: application/json
 
 {
@@ -402,7 +402,7 @@ sequenceDiagram
     API-->>Reporter: ServiceHealthResponse
     
     alt Health status > 0
-        Reporter->>Reporter: Build ComponentStatus
+        Reporter->>Reporter: Build IncidentData
         Reporter->>Dashboard: POST /v1/component_status
         Dashboard-->>Reporter: 200 OK
     end

@@ -309,12 +309,29 @@
         "url"
       ],
       "properties": {
-        "secret": {
-          "description": "JWT token signature secret",
+        "oidc_issuer": {
+          "description": "Zitadel OIDC issuer URL",
           "type": [
             "string",
             "null"
           ]
+        },
+        "oidc_key_file": {
+          "description": "Path to the Zitadel machine user key file.\n\nThe file is downloaded from the Zitadel Console for a machine user (service user) and has `type: serviceaccount`; it is read once at startup and any other key type fails startup.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "oidc_scopes": {
+          "description": "OIDC scopes of the token request, sent as one space-joined `scope` parameter.\n\n`MP_STATUS_DASHBOARD__OIDC_SCOPES` has to contain both `urn:zitadel:iam:org:project:role:sd_reporters`, so that the roles are reported in the `groups` claim, and `urn:zitadel:iam:org:project:id:<projectId>:aud`, which makes `aud` the project id the Status Dashboard verifies against `SD_OIDC_CLIENT_ID`. `<projectId>` is the Zitadel project shared by the Status Dashboard and the machine user. Without the audience scope Zitadel puts the client id into `aud`, which the backend rejects.\n\nThere is no default, because the audience scope carries the project id of the deployment.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
         },
         "url": {
           "description": "Status dashboard URL",

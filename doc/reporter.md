@@ -9,7 +9,7 @@ The reporter acts as a bridge between the convertor's real-time health evaluatio
 2. Polls convertor API at regular intervals (60 seconds)
 3. Checks if service health has degraded (impact > 0)
 4. Creates incidents via Status Dashboard API
-5. Handles HMAC-JWT authentication
+5. Authenticates with a Zitadel OIDC service identity
 
 **Key Characteristics**:
 - **Background service**: Runs as daemon or scheduled job
@@ -138,18 +138,24 @@ Incidents are created with static, secure payloads:
 
 ### 5. Authentication
 
-The reporter uses HMAC-JWT for authentication (unchanged from V1):
+The reporter authenticates to the Status Dashboard with a Zitadel OIDC service identity whose JWT
+Profile exchange is delegated to the community `zitadel` crate:
 
 ```rust
-// Generate HMAC-JWT token
-let headers = build_auth_headers(secret.as_deref());
-// Headers contain: Authorization: Bearer <jwt-token>
+// Request a service identity token and build the authorization headers
+let headers = build_auth_headers(&service_identity).await?;
 ```
 
-**Token Format**:
-- Algorithm: HMAC-SHA256
-- Claims: `{"stackmon": "dummy"}`
-- Optional: No secret = no auth header (for environments without auth)
+**Token acquisition**:
+- Endpoint: discovered per request from `{status_dashboard.oidc_issuer}/.well-known/openid-configuration`
+- Grant: `urn:ietf:params:oauth:grant-type:jwt-bearer` with an RS256 assertion the crate signs from
+  the machine user key file; never HTTP Basic auth and never a client secret
+- Credentials: the Zitadel machine user key file configured through `oidc_key_file`
+- Scope: `status_dashboard.oidc_scopes` (the crate prepends `openid`), space-joined in one field
+- Fail-closed: a missing issuer, key file or scope list, an unreadable, invalid or mistyped key
+  file, and a scope list without a project role scope or without the project audience scope abort
+  the reporter at startup, naming the configuration key
+- No token caching in-process, a fresh assertion and token are requested before every report
 
 ## Module Structure
 
@@ -166,7 +172,7 @@ pub struct IncidentData { title, description, impact, components, start_date, sy
 pub type ComponentCache = HashMap<(String, Vec<ComponentAttribute>), u32>;
 
 // Authentication
-pub fn build_auth_headers(secret: Option<&str>) -> HeaderMap
+pub async fn build_auth_headers(identity: &OidcIdentity) -> anyhow::Result<HeaderMap>
 
 // V2 API Functions
 pub async fn fetch_components(...) -> Result<Vec<StatusDashboardComponent>>
@@ -175,6 +181,9 @@ pub fn find_component_id(...) -> Option<u32>
 pub fn build_incident_data(...) -> IncidentData
 pub async fn create_incident(...) -> Result<()>
 ```
+
+The Zitadel side of the flow lives in `src/oidc.rs`: it loads the machine user key file once and
+delegates discovery, assertion signing and the token request to the `zitadel` crate.
 
 ## Configuration
 
@@ -193,13 +202,19 @@ convertor:
 ```yaml
 status_dashboard:
   url: "https://dashboard.example.com"
-  secret: "your-jwt-secret"
+  oidc_issuer: "https://zitadel.example.com"
+  oidc_key_file: "/etc/cloudmon/service-account.json"
+  oidc_scopes:
+    - "urn:zitadel:iam:org:project:role:sd_reporters"
+    - "urn:zitadel:iam:org:project:id:<projectId>:aud"
 ```
 
-| Property | Type   | Required | Default | Description                           |
-|----------|--------|----------|---------|---------------------------------------|
-| `url`    | string | Yes      | -       | Status Dashboard API URL              |
-| `secret` | string | No       | -       | JWT signing secret for authentication |
+| Property       | Type     | Required | Default                                             | Description                                 |
+|----------------|----------|----------|-----------------------------------------------------|---------------------------------------------|
+| `url`          | string   | Yes      | -                                                   | Status Dashboard API URL                    |
+| `oidc_issuer`  | string   | Yes      | -                                                   | Zitadel issuer URL                          |
+| `oidc_key_file` | string  | Yes      | -                                                   | Path to the Zitadel machine user key file |
+| `oidc_scopes`  | string[] | Yes      | -                                                   | Requested token scopes; needs a `project:role:` scope and the `project:id:<projectId>:aud` scope |
 
 ### Health Query Configuration
 
@@ -282,7 +297,7 @@ spec:
 Override configuration:
 
 ```bash
-MP_STATUS_DASHBOARD__SECRET=new-secret \
+MP_STATUS_DASHBOARD__OIDC_KEY_FILE=/etc/cloudmon/service-account.json \
 MP_CONVERTOR__URL=http://convertor-svc:3005 \
 cloudmon-metrics-reporter --config config.yaml
 ```
@@ -307,7 +322,7 @@ cloudmon-metrics-reporter --config config.yaml
 - Poll cycle duration
 - Notification success rate
 - API errors (convertor, dashboard)
-- JWT token generation failures
+- OIDC service token acquisition failures
 
 **Logging**:
 ```bash
@@ -390,8 +405,9 @@ When the reporter decides to create an incident, it logs all the information nee
 
 ### Authentication Failures
 
-**Cause**: Invalid JWT secret
-**Solution**: Update `status_dashboard.secret` in configuration
+**Cause**: Invalid Zitadel OIDC service identity credentials
+**Solution**: Verify `status_dashboard.oidc_issuer` and that `oidc_key_file` points to the key file
+of a `serviceaccount` machine user (or `application` client), whose key id, key and id are all present
 
 ## Use Cases
 
@@ -429,8 +445,8 @@ curl http://localhost:3005/v1/health?service=api&environment=prod&from=2024-01-0
 
 ### "Dashboard authentication failed"
 
-**Cause**: Invalid JWT secret
-**Solution**: Ensure `status_dashboard.secret` matches dashboard configuration
+**Cause**: Invalid service identity credentials or a missing Reporter role
+**Solution**: Verify the Zitadel machine user credentials and that the requested role scope maps to the dashboard reporter role
 
 ### "No services being polled"
 

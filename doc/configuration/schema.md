@@ -195,13 +195,22 @@ Optional status dashboard integration.
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
 | `url` | string | Yes | Status dashboard URL |
-| `secret` | string | No | JWT signing secret |
+| `oidc_issuer` | string | Yes | Zitadel OIDC issuer URL |
+| `oidc_key_file` | string | Yes | Path to the Zitadel machine user key file (JWT profile) |
+| `oidc_scopes` | string[] | Yes | Requested token scopes; has to list a `project:role:` scope and the `project:id:<projectId>:aud` scope of the Status Dashboard project |
 
 ```yaml
 status_dashboard:
   url: "https://status.example.com"
-  secret: "your-jwt-secret"  # Use MP_STATUS_DASHBOARD__SECRET env var instead
+  oidc_issuer: "https://zitadel.example.com"
+  oidc_key_file: "/etc/cloudmon/service-account.json"
+  oidc_scopes:
+    - "urn:zitadel:iam:org:project:role:sd_reporters"
+    - "urn:zitadel:iam:org:project:id:<projectId>:aud"
 ```
+
+A scope list that misses the role scope or the audience scope fails startup with
+`MP_STATUS_DASHBOARD__OIDC_SCOPES` named in the error.
 
 ## Comparison Operators
 

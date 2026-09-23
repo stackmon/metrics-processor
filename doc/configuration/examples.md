@@ -596,7 +596,12 @@ server:
 
 status_dashboard:
   url: "https://status.example.com"
-  # Secret should be set via MP_STATUS_DASHBOARD__SECRET environment variable
+  oidc_issuer: "https://zitadel.example.com"
+  oidc_key_file: "/etc/cloudmon/service-account.json"
+  # Zitadel machine user key file mounted as a secret volume
+  oidc_scopes:
+    - "urn:zitadel:iam:org:project:role:sd_reporters"
+    - "urn:zitadel:iam:org:project:id:<projectId>:aud"
 
 metric_templates:
   api_latency:

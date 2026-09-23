@@ -27,12 +27,9 @@ metrics-processor/
 │   ├── api/                      # API reference
 │   ├── configuration/            # Configuration reference
 │   ├── integration/              # TSDB integration guides
-│   ├── modules/                  # Rust module documentation
 │   └── guides/                   # Operational guides
 ├── tests/                        # Integration and documentation tests
 │   └── documentation_validation.rs  # Documentation example validation
-├── specs/                        # Feature specifications
-│   └── 001-project-documentation/   # This feature's design docs
 ├── Cargo.toml                    # Rust dependencies and project metadata
 ├── build.rs                      # Build script (generates JSON schemas)
 ├── openapi-schema.yaml           # OpenAPI 3.0 API specification
@@ -76,7 +73,7 @@ Two independent executable binaries:
   - `GET /v1/health`: Query health metrics for services
   - `GET /v1/maintenances`: Query maintenance status
 - **Key types**: `HealthQuery`, `HealthResponse`, `MaintenancesResponse`
-- **Authentication**: JWT token validation for status dashboard
+- **Outbound authentication**: Zitadel OIDC service identity for reporter calls
 
 **When to edit**: Adding/modifying API endpoints, changing request/response formats
 
@@ -245,4 +242,4 @@ All I/O operations use Tokio async runtime:
 - **New to the codebase?** Start with [Quickstart Guide](quickstart.md)
 - **Want to contribute?** Read [Development Workflow](development.md)
 - **Need to understand architecture?** See [Architecture Overview](../architecture/overview.md)
-- **Adding a feature?** Check [Module Documentation](../modules/overview.md) for responsibilities
+- **Adding a feature?** Check [Architecture Overview](../architecture/overview.md) for responsibilities

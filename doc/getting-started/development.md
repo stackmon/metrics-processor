@@ -21,6 +21,12 @@ pre-commit install
 cargo install mdbook
 ```
 
+Native build tools are required as well, because the `zitadel` crate builds `aws-lc-rs` for its JWT
+support:
+
+- Linux/macOS: a C toolchain and CMake
+- Windows: a C toolchain plus NASM on `PATH` (for example `scoop install nasm`)
+
 ## Building the Project
 
 ### Development Build

@@ -297,11 +297,11 @@ Now that you have a working environment, explore these documentation sections:
 | **Architecture** | System design, data flow | `doc/architecture/` |
 | **API Reference** | Endpoint details, authentication | `doc/api/` |
 | **Configuration** | All config fields, examples | `doc/configuration/` |
-| **Module Docs** | Rust module responsibilities | `doc/modules/` |
+| **Code Docs** | Generated module documentation | `cargo doc --open` |
 | **Troubleshooting** | Common issues, solutions | `doc/guides/troubleshooting.md` |
 
 **Next Steps**:
-- Read [Architecture Overview](../../../doc/architecture/overview.md) to understand component interactions
+- Read [Architecture Overview](../architecture/overview.md) to understand component interactions
 - Review [Configuration Schema](./contracts/config-schema.json) for full config reference
 - Check [patterns.json](./contracts/patterns.json) for coding conventions
 
@@ -385,7 +385,7 @@ You've successfully completed onboarding if you can:
 
 ## Getting Help
 
-- **Code Questions**: Check `doc/modules/` for module-specific documentation
+- **Code Questions**: Run `cargo doc --open` for the generated module documentation
 - **Configuration Issues**: See `doc/configuration/schema.md` for field reference
 - **Architecture Questions**: Read `doc/architecture/overview.md`
 - **Bugs**: Check `doc/guides/troubleshooting.md` first, then file an issue
