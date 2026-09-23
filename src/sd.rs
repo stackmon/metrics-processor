@@ -3,13 +3,12 @@
 //! This module contains all functionality for integrating with the Status Dashboard API,
 //! including component management, incident creation, cache operations, and authentication.
 
-use anyhow;
-use hmac::{Hmac, Mac};
-use jwt::SignWithKey;
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
+
+use crate::config::OidcIdentity;
+use crate::oidc::fetch_service_token;
 
 /// Component attribute (key-value pair) for identifying components
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -22,14 +21,6 @@ pub struct ComponentAttribute {
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct Component {
     pub name: String,
-    pub attributes: Vec<ComponentAttribute>,
-}
-
-/// Component status for V1 API (legacy, deprecated - use V2 IncidentData instead)
-#[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct ComponentStatus {
-    pub name: String,
-    pub impact: u8,
     pub attributes: Vec<ComponentAttribute>,
 }
 
@@ -58,27 +49,14 @@ pub struct IncidentData {
 /// Component ID cache: maps (component_name, sorted_attributes) to component_id
 pub type ComponentCache = HashMap<(String, Vec<ComponentAttribute>), u32>;
 
-/// Generate HMAC-JWT authorization headers for Status Dashboard API
-///
-/// Creates a Bearer token using HMAC-SHA256 signing with the provided secret.
-/// Returns empty HeaderMap if no secret is provided (for optional auth environments).
-///
-/// # Arguments
-/// * `secret` - Optional HMAC secret for JWT signing
-///
-/// # Returns
-/// HeaderMap with Authorization header if secret provided, empty otherwise
-pub fn build_auth_headers(secret: Option<&str>) -> HeaderMap {
+/// D6: a token is requested for every authenticated call, never cached in-process, and a failed
+/// request must not degrade into an unauthenticated one.
+pub async fn build_auth_headers(identity: &OidcIdentity) -> anyhow::Result<HeaderMap> {
+    let token = fetch_service_token(identity).await?;
     let mut headers = HeaderMap::new();
-    if let Some(secret) = secret {
-        let key: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();
-        let mut claims = BTreeMap::new();
-        claims.insert("stackmon", "dummy");
-        let token_str = claims.sign_with_key(&key).unwrap();
-        let bearer = format!("Bearer {}", token_str);
-        headers.insert(reqwest::header::AUTHORIZATION, bearer.parse().unwrap());
-    }
-    headers
+    let value = HeaderValue::from_str(&format!("Bearer {}", token))?;
+    headers.insert(reqwest::header::AUTHORIZATION, value);
+    Ok(headers)
 }
 
 /// Fetch all components from Status Dashboard API V2

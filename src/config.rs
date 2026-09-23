@@ -37,6 +37,7 @@
 
 use glob::glob;
 
+use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
@@ -45,9 +46,10 @@ use std::{
     path::Path,
 };
 
-use config::{ConfigError, Environment, File};
-
+use crate::oidc::{load_service_account, normalize_issuer};
 use crate::types::{BinaryMetricRawDef, EnvironmentDef, FlagMetricDef, ServiceHealthDef};
+use config::{ConfigError, Environment, File};
+use zitadel::credentials::ServiceAccount;
 
 /// A Configuration structure
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -100,7 +102,7 @@ impl Config {
         }
 
         // merge environment variables (subelements separated by "__")
-        // MP_STATUS_DASHBOARD__SECRET goes to status_dashboard.secret
+
         s = s.add_source(
             Environment::with_prefix("MP")
                 .prefix_separator("_")
@@ -175,8 +177,139 @@ pub enum DatasourceType {
 pub struct StatusDashboardConfig {
     /// Status dashboard URL
     pub url: String,
-    /// JWT token signature secret
-    pub secret: Option<String>,
+    /// Zitadel OIDC issuer URL
+    pub oidc_issuer: Option<String>,
+    /// Path to the Zitadel machine user key file.
+    ///
+    /// The file is downloaded from the Zitadel Console for a machine user (service user) and has
+    /// `type: serviceaccount`; it is read once at startup and any other key type fails startup.
+    pub oidc_key_file: Option<String>,
+    /// OIDC scopes of the token request, sent as one space-joined `scope` parameter.
+    ///
+    /// `MP_STATUS_DASHBOARD__OIDC_SCOPES` has to contain both
+    /// `urn:zitadel:iam:org:project:role:sd_reporters`, so that the roles are reported in the
+    /// `groups` claim, and `urn:zitadel:iam:org:project:id:<projectId>:aud`, which makes `aud` the
+    /// project id the Status Dashboard verifies against `SD_OIDC_CLIENT_ID`. `<projectId>` is the
+    /// Zitadel project shared by the Status Dashboard and the machine user. Without the audience
+    /// scope Zitadel puts the client id into `aud`, which the backend rejects.
+    ///
+    /// There is no default, because the audience scope carries the project id of the deployment.
+    pub oidc_scopes: Option<Vec<String>>,
+}
+
+pub const OIDC_ISSUER_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_ISSUER";
+pub const OIDC_KEY_FILE_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_KEY_FILE";
+pub const OIDC_SCOPES_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_SCOPES";
+
+const OIDC_ROLE_SCOPE_PREFIX: &str = "urn:zitadel:iam:org:project:role:";
+const OIDC_AUDIENCE_SCOPE_PREFIX: &str = "urn:zitadel:iam:org:project:id:";
+const OIDC_AUDIENCE_SCOPE_SUFFIX: &str = ":aud";
+const OIDC_SCOPES_EXAMPLE: &str = concat!(
+    "  oidc_scopes:\n",
+    "    - \"urn:zitadel:iam:org:project:role:sd_reporters\"\n",
+    "    - \"urn:zitadel:iam:org:project:id:<projectId>:aud\"",
+);
+
+pub struct OidcIdentity {
+    pub issuer: String,
+    pub service_account: ServiceAccount,
+    pub scopes: Vec<String>,
+}
+
+impl std::fmt::Debug for OidcIdentity {
+    /// The crate renders the loaded key material in its own `Debug` output, so it is not forwarded.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcIdentity")
+            .field("issuer", &self.issuer)
+            .field("service_account", &"<redacted>")
+            .field("scopes", &self.scopes)
+            .finish()
+    }
+}
+
+impl StatusDashboardConfig {
+    /// Reporting is fail-closed: an incomplete identity must stop startup, so every problem names
+    /// the offending configuration key.
+    pub fn oidc_identity(&self) -> anyhow::Result<OidcIdentity> {
+        let issuer = self
+            .oidc_issuer
+            .as_deref()
+            .filter(|issuer| !issuer.trim().is_empty());
+        let key_file_path = self
+            .oidc_key_file
+            .as_deref()
+            .filter(|key_file| !key_file.trim().is_empty());
+        let scopes = self.oidc_scopes.as_deref().unwrap_or_default();
+
+        if let (Some(issuer), Some(key_file_path)) = (issuer, key_file_path) {
+            validate_oidc_scopes(scopes)?;
+
+            let service_account = load_service_account(key_file_path).with_context(|| {
+                format!(
+                    "{} does not point to a usable Zitadel machine user key file",
+                    OIDC_KEY_FILE_ENV_KEY
+                )
+            })?;
+
+            return Ok(OidcIdentity {
+                issuer: normalize_issuer(issuer),
+                service_account,
+                scopes: scopes.to_vec(),
+            });
+        }
+
+        let mut missing = Vec::new();
+        if issuer.is_none() {
+            missing.push(OIDC_ISSUER_ENV_KEY);
+        }
+        if key_file_path.is_none() {
+            missing.push(OIDC_KEY_FILE_ENV_KEY);
+        }
+        if scopes.is_empty() {
+            missing.push(OIDC_SCOPES_ENV_KEY);
+        }
+
+        anyhow::bail!(
+            "Status Dashboard OIDC service identity is incomplete, missing: {}",
+            missing.join(", ")
+        )
+    }
+}
+
+/// The Status Dashboard takes the token audience and the reporter role from scopes that Zitadel
+/// only applies when the project audience scope is requested, so a scope list with either scope
+/// class missing would fail with 401 at report time instead of at startup.
+fn validate_oidc_scopes(scopes: &[String]) -> anyhow::Result<()> {
+    let mut missing = Vec::new();
+    if !scopes
+        .iter()
+        .any(|scope| scope.starts_with(OIDC_ROLE_SCOPE_PREFIX))
+    {
+        missing.push(format!(
+            "a scope starting with \"{OIDC_ROLE_SCOPE_PREFIX}\""
+        ));
+    }
+    if !scopes.iter().any(|scope| {
+        scope.starts_with(OIDC_AUDIENCE_SCOPE_PREFIX) && scope.ends_with(OIDC_AUDIENCE_SCOPE_SUFFIX)
+    }) {
+        missing.push(format!(
+            "a scope starting with \"{OIDC_AUDIENCE_SCOPE_PREFIX}\" and ending with \"{OIDC_AUDIENCE_SCOPE_SUFFIX}\""
+        ));
+    }
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "{} (status_dashboard.oidc_scopes) must contain both a project role scope and the project \
+         audience scope of the Zitadel project shared with the Status Dashboard, missing {}. \
+         Zitadel only reports the project roles claim when the audience scope is requested, so a \
+         token requested without it is rejected. Set for example:\n{}",
+        OIDC_SCOPES_ENV_KEY,
+        missing.join(" and "),
+        OIDC_SCOPES_EXAMPLE
+    )
 }
 
 /// Health metrics query configuration
@@ -314,12 +447,15 @@ mod test {
 
         config_file.write_all(CONFIG_STR1.as_bytes()).unwrap();
 
-        env::set_var("MP_STATUS_DASHBOARD__SECRET", "val");
+        env::set_var("MP_STATUS_DASHBOARD__OIDC_KEY_FILE", "val");
         let _config = config::Config::new(config_file.path().to_str().unwrap()).unwrap();
-        assert_eq!(_config.status_dashboard.unwrap().secret.unwrap(), "val");
+        assert_eq!(
+            _config.status_dashboard.unwrap().oidc_key_file.unwrap(),
+            "val"
+        );
 
         // Clean up to avoid affecting other tests
-        env::remove_var("MP_STATUS_DASHBOARD__SECRET");
+        env::remove_var("MP_STATUS_DASHBOARD__OIDC_KEY_FILE");
     }
 
     /// Test merging of the config with conf.d elements
@@ -532,5 +668,363 @@ mod test {
         fs::write(&schema_path, &schema_json).expect("Failed to write config-schema.json");
 
         println!("Generated JSON schema at: {}", schema_path.display());
+    }
+
+    const ROLE_SCOPE: &str = "urn:zitadel:iam:org:project:role:sd_reporters";
+    const AUDIENCE_SCOPE: &str = "urn:zitadel:iam:org:project:id:392066917738875090:aud";
+
+    fn status_dashboard_section() -> super::StatusDashboardConfig {
+        serde_yaml::from_str(&format!(
+            "url: https://status.example.com\noidc_scopes:\n  - \"{ROLE_SCOPE}\"\n  - \"{AUDIENCE_SCOPE}\"\n"
+        ))
+        .unwrap()
+    }
+
+    fn write_key_file(dir: &tempfile::TempDir) -> String {
+        use crate::oidc::test_keys::service_account_key_file_json;
+
+        let path = dir.path().join("service-account.json");
+        std::fs::write(&path, service_account_key_file_json()).unwrap();
+        path.to_str().unwrap().to_string()
+    }
+
+    fn scopes_config(scopes: Option<Vec<String>>, key_file: &str) -> super::StatusDashboardConfig {
+        super::StatusDashboardConfig {
+            oidc_issuer: Some("https://zitadel.example.com".to_string()),
+            oidc_key_file: Some(key_file.to_string()),
+            oidc_scopes: scopes,
+            ..status_dashboard_section()
+        }
+    }
+
+    #[test]
+    fn test_oidc_identity_reports_missing_configuration_keys() {
+        let both_missing = super::StatusDashboardConfig {
+            oidc_scopes: None,
+            ..status_dashboard_section()
+        };
+        let message = format!("{:#}", both_missing.oidc_identity().unwrap_err());
+        for key in [
+            super::OIDC_ISSUER_ENV_KEY,
+            super::OIDC_KEY_FILE_ENV_KEY,
+            super::OIDC_SCOPES_ENV_KEY,
+        ] {
+            assert!(message.contains(key), "{} not reported: {}", key, message);
+        }
+
+        let key_file_missing = super::StatusDashboardConfig {
+            oidc_issuer: Some("https://zitadel.example.com".to_string()),
+            ..status_dashboard_section()
+        };
+        let message = format!("{:#}", key_file_missing.oidc_identity().unwrap_err());
+        assert!(
+            message.contains(super::OIDC_KEY_FILE_ENV_KEY),
+            "unexpected error: {}",
+            message
+        );
+        assert!(
+            !message.contains(super::OIDC_ISSUER_ENV_KEY),
+            "unexpected error: {}",
+            message
+        );
+
+        let issuer_missing = super::StatusDashboardConfig {
+            oidc_key_file: Some("service-account.json".to_string()),
+            ..status_dashboard_section()
+        };
+        let message = format!("{:#}", issuer_missing.oidc_identity().unwrap_err());
+        assert!(
+            message.contains(super::OIDC_ISSUER_ENV_KEY),
+            "unexpected error: {}",
+            message
+        );
+        assert!(
+            !message.contains(super::OIDC_KEY_FILE_ENV_KEY),
+            "unexpected error: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn test_oidc_identity_rejects_scopes_without_the_project_audience() {
+        let dir = Builder::new().tempdir().unwrap();
+        let key_file = write_key_file(&dir);
+        let project_id_without_audience = "urn:zitadel:iam:org:project:id:392066917738875090";
+
+        let cases = [
+            vec![ROLE_SCOPE.to_string()],
+            vec![
+                ROLE_SCOPE.to_string(),
+                project_id_without_audience.to_string(),
+            ],
+        ];
+
+        for scopes in cases {
+            let config = scopes_config(Some(scopes.clone()), &key_file);
+            let message = format!("{:#}", config.oidc_identity().unwrap_err());
+
+            assert!(
+                message.contains(super::OIDC_SCOPES_ENV_KEY),
+                "{:?} not reported: {}",
+                scopes,
+                message
+            );
+            assert!(
+                message.contains(&format!(
+                    "a scope starting with \"{}\" and ending with \"{}\"",
+                    super::OIDC_AUDIENCE_SCOPE_PREFIX,
+                    super::OIDC_AUDIENCE_SCOPE_SUFFIX
+                )),
+                "the missing audience scope is not named: {}",
+                message
+            );
+            assert!(
+                !message.contains(&format!(
+                    "a scope starting with \"{}\"",
+                    super::OIDC_ROLE_SCOPE_PREFIX
+                )),
+                "a configured role scope is reported as missing: {}",
+                message
+            );
+            assert!(
+                message.contains("urn:zitadel:iam:org:project:id:<projectId>:aud"),
+                "the audience scope example is missing: {}",
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn test_oidc_identity_rejects_scopes_without_a_project_role() {
+        let dir = Builder::new().tempdir().unwrap();
+        let key_file = write_key_file(&dir);
+
+        let cases = [
+            vec![AUDIENCE_SCOPE.to_string()],
+            vec!["openid".to_string(), AUDIENCE_SCOPE.to_string()],
+        ];
+
+        for scopes in cases {
+            let config = scopes_config(Some(scopes.clone()), &key_file);
+            let message = format!("{:#}", config.oidc_identity().unwrap_err());
+
+            assert!(
+                message.contains(super::OIDC_SCOPES_ENV_KEY),
+                "{:?} not reported: {}",
+                scopes,
+                message
+            );
+            assert!(
+                message.contains(&format!(
+                    "a scope starting with \"{}\"",
+                    super::OIDC_ROLE_SCOPE_PREFIX
+                )),
+                "the missing role scope is not named: {}",
+                message
+            );
+            assert!(
+                !message.contains(&format!(
+                    "a scope starting with \"{}\" and ending with \"{}\"",
+                    super::OIDC_AUDIENCE_SCOPE_PREFIX,
+                    super::OIDC_AUDIENCE_SCOPE_SUFFIX
+                )),
+                "a configured audience scope is reported as missing: {}",
+                message
+            );
+            assert!(
+                message.contains("urn:zitadel:iam:org:project:role:sd_reporters"),
+                "the role scope example is missing: {}",
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn test_oidc_identity_rejects_scopes_that_are_not_configured() {
+        let dir = Builder::new().tempdir().unwrap();
+        let key_file = write_key_file(&dir);
+        let cases: [Option<Vec<String>>; 2] = [None, Some(Vec::new())];
+
+        for scopes in cases {
+            let config = scopes_config(scopes, &key_file);
+            let message = format!("{:#}", config.oidc_identity().unwrap_err());
+
+            assert!(
+                message.contains(super::OIDC_SCOPES_ENV_KEY),
+                "{} not reported: {}",
+                super::OIDC_SCOPES_ENV_KEY,
+                message
+            );
+            for prefix in [
+                super::OIDC_ROLE_SCOPE_PREFIX,
+                super::OIDC_AUDIENCE_SCOPE_PREFIX,
+            ] {
+                assert!(
+                    message.contains(prefix),
+                    "{} not reported: {}",
+                    prefix,
+                    message
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_oidc_identity_accepts_configured_role_and_audience_scopes() {
+        let dir = Builder::new().tempdir().unwrap();
+        let key_file = write_key_file(&dir);
+        let scopes = vec![
+            "openid".to_string(),
+            ROLE_SCOPE.to_string(),
+            AUDIENCE_SCOPE.to_string(),
+        ];
+
+        let config = scopes_config(Some(scopes.clone()), &key_file);
+        let identity = config.oidc_identity().unwrap();
+
+        assert_eq!(identity.scopes, scopes);
+        assert_eq!(identity.issuer, "https://zitadel.example.com");
+    }
+
+    #[test]
+    fn test_oidc_identity_reports_the_failing_key_file() {
+        use crate::oidc::test_keys::{
+            application_key_file_json, key_file_json_with_type, KEY_ID, USER_ID,
+        };
+
+        let dir = Builder::new().tempdir().unwrap();
+
+        let invalid_json = dir.path().join("invalid.json");
+        std::fs::write(&invalid_json, "{ not json }").unwrap();
+
+        let unknown_type = dir.path().join("unknown-type.json");
+        std::fs::write(&unknown_type, key_file_json_with_type("widget")).unwrap();
+
+        let application = dir.path().join("application.json");
+        std::fs::write(&application, application_key_file_json()).unwrap();
+
+        let empty_user = dir.path().join("empty-user.json");
+        std::fs::write(
+            &empty_user,
+            serde_json::json!({
+                "type": "serviceaccount",
+                "keyId": KEY_ID,
+                "key": "-----BEGIN",
+                "userId": "",
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let empty_key = dir.path().join("empty-key.json");
+        std::fs::write(
+            &empty_key,
+            serde_json::json!({
+                "type": "serviceaccount",
+                "keyId": KEY_ID,
+                "key": "",
+                "userId": USER_ID,
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let cases = [
+            dir.path().join("does-not-exist.json"),
+            invalid_json,
+            unknown_type,
+            application,
+            empty_user,
+            empty_key,
+        ];
+        let mut messages = Vec::new();
+
+        for path in cases {
+            let config = super::StatusDashboardConfig {
+                oidc_issuer: Some("https://zitadel.example.com".to_string()),
+                oidc_key_file: Some(path.to_str().unwrap().to_string()),
+                ..status_dashboard_section()
+            };
+
+            let message = format!("{:#}", config.oidc_identity().unwrap_err());
+            assert!(
+                message.contains(super::OIDC_KEY_FILE_ENV_KEY),
+                "{} not reported: {}",
+                super::OIDC_KEY_FILE_ENV_KEY,
+                message
+            );
+            messages.push(message);
+        }
+
+        assert!(
+            messages[0].contains("cannot be read"),
+            "unexpected error: {}",
+            messages[0]
+        );
+        assert!(
+            messages[1].contains("not valid JSON"),
+            "unexpected error: {}",
+            messages[1]
+        );
+        for index in [2, 3] {
+            assert!(
+                messages[index].contains("serviceaccount"),
+                "unexpected error: {}",
+                messages[index]
+            );
+        }
+        assert!(
+            messages[4].contains("empty userId"),
+            "unexpected error: {}",
+            messages[4]
+        );
+        assert!(
+            messages[5].contains("empty key"),
+            "unexpected error: {}",
+            messages[5]
+        );
+
+        for (index, message) in messages.iter().enumerate() {
+            assert!(
+                !messages[..index].contains(message),
+                "error messages are not distinguishable: {}",
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn test_oidc_identity_loads_the_key_file_and_normalizes_the_issuer() {
+        let dir = Builder::new().tempdir().unwrap();
+        let key_file = write_key_file(&dir);
+
+        let config = super::StatusDashboardConfig {
+            oidc_issuer: Some("https://zitadel.example.com/".to_string()),
+            oidc_key_file: Some(key_file.clone()),
+            ..status_dashboard_section()
+        };
+
+        let identity = config.oidc_identity().unwrap();
+
+        assert_eq!(identity.issuer, "https://zitadel.example.com");
+        assert_eq!(
+            identity.token_url(),
+            "https://zitadel.example.com/oauth/v2/token"
+        );
+        let rendered = format!("{:?}", identity);
+        assert!(
+            rendered.contains("https://zitadel.example.com"),
+            "unexpected debug output: {}",
+            rendered
+        );
+        assert!(
+            !rendered.contains("PRIVATE KEY") && !rendered.contains("key_id"),
+            "key material leaked into debug output: {}",
+            rendered
+        );
+        assert_eq!(
+            identity.scopes,
+            vec![ROLE_SCOPE.to_string(), AUDIENCE_SCOPE.to_string()]
+        );
     }
 }

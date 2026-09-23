@@ -112,11 +112,19 @@ use std::time::Duration;
 
 use regex::Regex;
 
+#[allow(dead_code)]
+#[path = "fixtures/service_account.rs"]
+mod service_account;
+use service_account::write_service_account_key_file;
+
 const GRAPHITE_URL: &str = "http://localhost:8080";
 const CARBON_HOST: &str = "localhost";
 const CARBON_PORT: u16 = 2003;
 const CONVERTOR_PORT: u16 = 3005;
 const STATUS_DASHBOARD_PORT: u16 = 9999;
+const SERVICE_ACCOUNT_KEY_FILE: &str = "target/e2e-service-account.json";
+const REPORTER_SCOPE: &str = "urn:zitadel:iam:org:project:role:sd_reporters";
+const AUDIENCE_SCOPE: &str = "urn:zitadel:iam:org:project:id:392066917738875090:aud";
 
 // ============================================================================
 // Test Infrastructure
@@ -471,6 +479,9 @@ fn start_mock_status_dashboard() -> Option<Child> {
     // Clean up any existing process on the port
     kill_process_on_port(STATUS_DASHBOARD_PORT);
 
+    // The mock doubles as the Zitadel issuer, so the reporter discovers its token endpoint here
+    let issuer = format!("http://localhost:{}", STATUS_DASHBOARD_PORT);
+
     // Use a Python HTTP server that supports IPv4/IPv6 and runs indefinitely
     let mock_server = Command::new("python3")
         .args([
@@ -484,7 +495,26 @@ import socket
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if '/v2/components' in self.path:
+        if '/.well-known/openid-configuration' in self.path:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            response = json.dumps({{
+                "issuer": "{issuer}",
+                "authorization_endpoint": "{issuer}/oauth/v2/authorize",
+                "token_endpoint": "{issuer}/oauth/v2/token",
+                "jwks_uri": "{issuer}/oauth/v2/keys",
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["RS256"]
+            }})
+            self.wfile.write(response.encode())
+        elif '/oauth/v2/keys' in self.path:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({{"keys": []}}).encode())
+        elif '/v2/components' in self.path:
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -497,7 +527,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        if '/v2/events' in self.path:
+        if '/oauth/v2/token' in self.path:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            response = json.dumps({{"access_token": "mock-access-token", "token_type": "Bearer", "expires_in": 3600}})
+            self.wfile.write(response.encode())
+        elif '/v2/events' in self.path:
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -786,7 +822,11 @@ server:
 
 status_dashboard:
   url: 'http://localhost:{}'
-  secret: 'test-secret-key'
+  oidc_issuer: 'http://localhost:{}'
+  oidc_key_file: '{}'
+  oidc_scopes:
+    - '{role_scope}'
+    - '{audience_scope}'
 
 metric_templates:
   api_down:
@@ -853,6 +893,8 @@ health_query:
         GRAPHITE_URL,
         CONVERTOR_PORT,
         STATUS_DASHBOARD_PORT,
+        STATUS_DASHBOARD_PORT,
+        SERVICE_ACCOUNT_KEY_FILE,
         service,
         service,
         service,
@@ -862,7 +904,9 @@ health_query:
         service,
         service,
         service,
-        service
+        service,
+        role_scope = REPORTER_SCOPE,
+        audience_scope = AUDIENCE_SCOPE
     )
 }
 
@@ -902,6 +946,9 @@ async fn test_e2e_reporter_log_validation() {
     let mut all_passed = true;
     let mut scenarios_run = 0;
     let config_path = "config.yaml";
+
+    let key_file = write_service_account_key_file(std::path::Path::new(SERVICE_ACCOUNT_KEY_FILE));
+    println!("service account key file written to {}", key_file);
 
     for scenario in scenarios {
         println!("\n============================================================");
