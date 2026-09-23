@@ -36,14 +36,6 @@
 - [Graphite Backend](integration/graphite.md)
 - [Adding New Backends](integration/adding-backends.md)
 
-# Modules
-- [Overview](modules/overview.md)
-- [API Module](modules/api.md)
-- [Config Module](modules/config.md)
-- [Types Module](modules/types.md)
-- [Graphite Module](modules/graphite.md)
-- [Common Module](modules/common.md)
-
 # Operational Guides
 - [Troubleshooting](guides/troubleshooting.md)
 - [Deployment](guides/deployment.md)

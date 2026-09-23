@@ -25,7 +25,6 @@ metrics-processor is there to address 2 primary needs:
 - `src/` - Rust source code
 - `doc/` - Documentation sources (mdbook)
 - `tests/` - Integration and validation tests
-- `specs/` - Feature specifications and implementation plans
 - `playbooks/` - Operational playbooks
 
 ## Documentation
@@ -63,7 +62,6 @@ mdbook serve doc/
 | [API Reference](doc/api/) | REST endpoints, authentication, examples |
 | [Configuration](doc/configuration/) | Config schema, examples, validation |
 | [Integration](doc/integration/) | TSDB interface, adding new backends |
-| [Modules](doc/modules/) | Rust module documentation |
 | [Guides](doc/guides/) | Troubleshooting, deployment |
 
 | [Testing](doc/testing.md) | Testing guide, fixtures, coverage |
