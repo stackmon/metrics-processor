@@ -123,6 +123,8 @@ const CARBON_PORT: u16 = 2003;
 const CONVERTOR_PORT: u16 = 3005;
 const STATUS_DASHBOARD_PORT: u16 = 9999;
 const SERVICE_ACCOUNT_KEY_FILE: &str = "target/e2e-service-account.json";
+const REPORTER_SCOPE: &str = "urn:zitadel:iam:org:project:role:sd_reporters";
+const AUDIENCE_SCOPE: &str = "urn:zitadel:iam:org:project:id:392066917738875090:aud";
 
 // ============================================================================
 // Test Infrastructure
@@ -822,6 +824,9 @@ status_dashboard:
   url: 'http://localhost:{}'
   oidc_issuer: 'http://localhost:{}'
   oidc_key_file: '{}'
+  oidc_scopes:
+    - '{role_scope}'
+    - '{audience_scope}'
 
 metric_templates:
   api_down:
@@ -899,7 +904,9 @@ health_query:
         service,
         service,
         service,
-        service
+        service,
+        role_scope = REPORTER_SCOPE,
+        audience_scope = AUDIENCE_SCOPE
     )
 }
 

@@ -30,6 +30,7 @@ const TOKEN_RESPONSE: &str =
     r#"{"access_token":"mock-access-token","token_type":"Bearer","expires_in":3600}"#;
 const OIDC_KEY_FILE_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_KEY_FILE";
 const OIDC_ISSUER_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_ISSUER";
+const OIDC_SCOPES_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_SCOPES";
 
 fn key_file() -> (tempfile::TempDir, String) {
     let dir = tempfile::tempdir().expect("failed to create a temp dir");
@@ -43,7 +44,7 @@ fn status_dashboard_config(issuer: &str, key_file: &str) -> StatusDashboardConfi
         url: "https://status.example.com".to_string(),
         oidc_issuer: Some(issuer.to_string()),
         oidc_key_file: Some(key_file.to_string()),
-        oidc_scopes: vec![REPORTER_SCOPE.to_string()],
+        oidc_scopes: Some(vec![REPORTER_SCOPE.to_string(), AUDIENCE_SCOPE.to_string()]),
     }
 }
 
@@ -309,7 +310,7 @@ async fn test_build_auth_headers() {
     // The crate always attaches the openid scope before the configured ones
     assert_eq!(
         request.form_field("scope").as_deref(),
-        Some(format!("{} {}", OPENID_SCOPE, REPORTER_SCOPE).as_str())
+        Some(format!("{} {} {}", OPENID_SCOPE, REPORTER_SCOPE, AUDIENCE_SCOPE).as_str())
     );
     assert_eq!(
         request.authorization, None,
@@ -790,7 +791,7 @@ async fn test_build_auth_headers_multiple_scopes() {
 
     let (_key_dir, key_file) = key_file();
     let mut cfg = status_dashboard_config(&server.url(), &key_file);
-    cfg.oidc_scopes = vec![REPORTER_SCOPE.to_string(), AUDIENCE_SCOPE.to_string()];
+    cfg.oidc_scopes = Some(vec![REPORTER_SCOPE.to_string(), AUDIENCE_SCOPE.to_string()]);
 
     let expected_scope = format!("{} {} {}", OPENID_SCOPE, REPORTER_SCOPE, AUDIENCE_SCOPE);
     let identity = cfg.oidc_identity().unwrap();
@@ -819,24 +820,24 @@ async fn test_build_auth_headers_multiple_scopes() {
     );
 }
 
-#[tokio::test]
-async fn test_build_auth_headers_without_configured_scopes() {
-    let mut server = mockito::Server::new_async().await;
-    let provider = OidcProvider::healthy(&mut server, 1).await;
-
+#[test]
+fn test_oidc_identity_rejects_scopes_without_the_audience_scope() {
     let (_key_dir, key_file) = key_file();
-    let mut cfg = status_dashboard_config(&server.url(), &key_file);
-    cfg.oidc_scopes = Vec::new();
+    let mut cfg = status_dashboard_config("https://zitadel.example.com", &key_file);
+    cfg.oidc_scopes = Some(vec![REPORTER_SCOPE.to_string()]);
 
-    let identity = cfg.oidc_identity().unwrap();
+    let message = format!("{:#}", cfg.oidc_identity().unwrap_err());
 
-    build_auth_headers(&identity).await.unwrap();
-
-    provider.assert().await;
-
-    assert_eq!(
-        provider.requests()[0].form_field("scope").as_deref(),
-        Some(OPENID_SCOPE)
+    assert!(
+        message.contains(OIDC_SCOPES_ENV_KEY),
+        "{} not reported: {}",
+        OIDC_SCOPES_ENV_KEY,
+        message
+    );
+    assert!(
+        message.contains("urn:zitadel:iam:org:project:id:<projectId>:aud"),
+        "the audience scope example is missing: {}",
+        message
     );
 }
 
@@ -967,13 +968,21 @@ fn test_oidc_identity_requires_all_credentials() {
 }
 
 #[test]
-fn test_status_dashboard_default_oidc_scopes() {
+fn test_status_dashboard_requires_oidc_scopes() {
     let cfg: StatusDashboardConfig =
         serde_yaml::from_str("url: https://status.example.com\n").unwrap();
 
-    assert_eq!(cfg.oidc_scopes, vec![REPORTER_SCOPE.to_string()]);
+    assert!(cfg.oidc_scopes.is_none());
     assert!(cfg.oidc_issuer.is_none());
     assert!(cfg.oidc_key_file.is_none());
+
+    let message = format!("{:#}", cfg.oidc_identity().unwrap_err());
+    assert!(
+        message.contains(OIDC_SCOPES_ENV_KEY),
+        "{} not reported: {}",
+        OIDC_SCOPES_ENV_KEY,
+        message
+    );
 }
 
 /// Test create_incident failure - verify error handling when API returns error
@@ -1221,9 +1230,14 @@ status_dashboard:
   url: '{url}'
   oidc_issuer: '{url}'
   oidc_key_file: '{key_file}'
+  oidc_scopes:
+    - '{role_scope}'
+    - '{audience_scope}'
 "#,
         url = server.url(),
         key_file = key_file,
+        role_scope = REPORTER_SCOPE,
+        audience_scope = AUDIENCE_SCOPE,
     );
 
     std::fs::write(dir.path().join("config.yaml"), config).unwrap();
@@ -1272,7 +1286,8 @@ status_dashboard:
 async fn test_reporter_reports_an_unusable_service_account_key_file() {
     let dir = tempfile::tempdir().unwrap();
 
-    let config = r#"---
+    let config = format!(
+        r#"---
 datasource:
   url: 'http://127.0.0.1:1'
 server:
@@ -1280,12 +1295,18 @@ server:
 environments:
   - name: test-env
 flag_metrics: []
-health_metrics: {}
+health_metrics: {{}}
 status_dashboard:
   url: 'http://127.0.0.1:1'
   oidc_issuer: 'http://127.0.0.1:1'
   oidc_key_file: 'service-account.json'
-"#;
+  oidc_scopes:
+    - '{role_scope}'
+    - '{audience_scope}'
+"#,
+        role_scope = REPORTER_SCOPE,
+        audience_scope = AUDIENCE_SCOPE,
+    );
 
     std::fs::write(dir.path().join("config.yaml"), config).unwrap();
 
