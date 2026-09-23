@@ -45,7 +45,7 @@ No configuration changes required. Existing `config.yaml` is compatible:
 ```yaml
 status_dashboard:
   url: "https://status-dashboard.example.com"
-  secret: "your-hmac-secret"  # Optional, for auth
+  jwt_secret: "your-hmac-secret"  # Optional, for auth
 
 environments:
   - name: production

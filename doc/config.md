@@ -34,7 +34,7 @@ environments:
 
 status_dashboard:
   url: "https://status.cloudmon.com"
-  secret: "dev"
+  jwt_secret: "dev"
 
 flag_metrics:
   ### Comp1
@@ -94,13 +94,13 @@ Configures URL and JWT secret for communication with the status dashboard.
 ```yaml
 status_dashboard:
   url: "https://status-dashboard.example.com"
-  secret: "your-jwt-secret"
+  jwt_secret: "your-jwt-secret"
 ```
 
-| Property | Type   | Required | Default | Description                           |
-|----------|--------|----------|---------|---------------------------------------|
-| `url`    | string | Yes      | -       | Status Dashboard API URL              |
-| `secret` | string | No       | -       | JWT signing secret for authentication |
+| Property     | Type   | Required | Default | Description                           |
+|--------------|--------|----------|---------|---------------------------------------|
+| `url`        | string | Yes      | -       | Status Dashboard API URL              |
+| `jwt_secret` | string | No       | -       | JWT signing secret for authentication |
 
 ## health_query
 

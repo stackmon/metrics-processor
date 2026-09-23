@@ -8,8 +8,12 @@ use hmac::{Hmac, Mac};
 use jwt::SignWithKey;
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use sha2::Sha256;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
+
+const CLAIM_PREFERRED_USERNAME: &str = "preferred_username";
+const CLAIM_GROUP: &str = "groups";
 
 /// Component attribute (key-value pair) for identifying components
 #[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -65,15 +69,41 @@ pub type ComponentCache = HashMap<(String, Vec<ComponentAttribute>), u32>;
 ///
 /// # Arguments
 /// * `secret` - Optional HMAC secret for JWT signing
+/// * `preferred_username` - Optional preferred_username claim for JWT
+/// * `group` - Optional group claim for JWT (will be placed into "groups" array in JWT payload)
 ///
 /// # Returns
 /// HeaderMap with Authorization header if secret provided, empty otherwise
-pub fn build_auth_headers(secret: Option<&str>) -> HeaderMap {
+pub fn build_auth_headers(
+    secret: Option<&str>,
+    preferred_username: Option<&str>,
+    group: Option<&str>,
+) -> HeaderMap {
     let mut headers = HeaderMap::new();
     if let Some(secret) = secret {
         let key: Hmac<Sha256> = Hmac::new_from_slice(secret.as_bytes()).unwrap();
-        let mut claims = BTreeMap::new();
-        claims.insert("stackmon", "dummy");
+
+        // Build claims as a JSON Value to support complex types
+        let mut claims_map = serde_json::Map::new();
+
+        // Add preferred_username if provided
+        if let Some(username) = preferred_username {
+            claims_map.insert(
+                CLAIM_PREFERRED_USERNAME.to_string(),
+                serde_json::Value::String(username.to_string()),
+            );
+        }
+
+        // Add group as array if provided (Status Dashboard expects "groups" claim name)
+        if let Some(group_value) = group {
+            let groups_json = vec![serde_json::Value::String(group_value.to_string())];
+            claims_map.insert(
+                CLAIM_GROUP.to_string(),
+                serde_json::Value::Array(groups_json),
+            );
+        }
+
+        let claims = serde_json::Value::Object(claims_map);
         let token_str = claims.sign_with_key(&key).unwrap();
         let bearer = format!("Bearer {}", token_str);
         headers.insert(reqwest::header::AUTHORIZATION, bearer.parse().unwrap());

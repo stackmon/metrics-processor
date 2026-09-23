@@ -786,7 +786,7 @@ server:
 
 status_dashboard:
   url: 'http://localhost:{}'
-  secret: 'test-secret-key'
+  jwt_secret: 'test-secret-key'
 
 metric_templates:
   api_down:

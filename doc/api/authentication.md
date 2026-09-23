@@ -26,7 +26,7 @@ The JWT token contains a simple claim structure:
 
 **Signing Process:**
 
-1. The shared secret is loaded from configuration (`status_dashboard.secret`)
+1. The shared secret is loaded from configuration (`status_dashboard.jwt_secret`)
 2. An HMAC-SHA256 key is created from the secret bytes
 3. Claims are signed with the key to produce the JWT token
 4. The token is included in the `Authorization` header as a Bearer token
@@ -51,7 +51,7 @@ status_dashboard:
 The secret can also be set via environment variable:
 
 ```bash
-export MP_STATUS_DASHBOARD__SECRET="your-shared-secret-key"
+export MP_STATUS_DASHBOARD__JWT_SECRET="your-shared-secret-key"
 ```
 
 Environment variables are merged with the configuration file, with environment variables taking precedence.
@@ -68,7 +68,7 @@ Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdGFja21vbiI6ImR1b
 
 ### Request Flow
 
-1. **Configuration Load:** The reporter reads the `status_dashboard.secret` from configuration
+1. **Configuration Load:** The reporter reads the `status_dashboard.jwt_secret` from configuration
 2. **Token Generation:** If a secret is configured, a JWT token is generated at startup
 3. **Request Authentication:** All POST requests to `/v1/component_status` include the Bearer token
 4. **Server Validation:** The status-dashboard validates the token signature using the same shared secret
@@ -86,7 +86,7 @@ On the server side (status-dashboard), tokens should be validated by:
 ### Secret Management
 
 - **Never commit secrets** to version control
-- Use environment variables (`MP_STATUS_DASHBOARD__SECRET`) in production
+- Use environment variables (`MP_STATUS_DASHBOARD__JWT_SECRET`) in production
 - Rotate secrets periodically
 - Use strong, randomly-generated secrets (minimum 32 characters recommended)
 

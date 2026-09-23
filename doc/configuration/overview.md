@@ -57,8 +57,8 @@ export MP_DATASOURCE__URL="http://graphite.example.com:8080"
 # Override server.port
 export MP_SERVER__PORT=3005
 
-# Set status_dashboard.secret (sensitive values)
-export MP_STATUS_DASHBOARD__SECRET="your-jwt-secret"
+# Set status_dashboard.jwt_secret (sensitive values)
+export MP_STATUS_DASHBOARD__JWT_SECRET="your-jwt-secret"
 ```
 
 **Best Practice**: Use environment variables for sensitive values like secrets and for deployment-specific overrides in containerized environments.
