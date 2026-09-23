@@ -57,8 +57,8 @@ export MP_DATASOURCE__URL="http://graphite.example.com:8080"
 # Override server.port
 export MP_SERVER__PORT=3005
 
-# Set status_dashboard.secret (sensitive values)
-export MP_STATUS_DASHBOARD__SECRET="your-jwt-secret"
+# Point the reporter at the Zitadel machine user key file
+export MP_STATUS_DASHBOARD__OIDC_KEY_FILE="/etc/cloudmon/service-account.json"
 ```
 
 **Best Practice**: Use environment variables for sensitive values like secrets and for deployment-specific overrides in containerized environments.

@@ -34,7 +34,8 @@ environments:
 
 status_dashboard:
   url: "https://status.cloudmon.com"
-  secret: "dev"
+  oidc_issuer: "https://zitadel.example.com"
+  oidc_key_file: "/etc/cloudmon/service-account.json"
 
 flag_metrics:
   ### Comp1
@@ -89,18 +90,37 @@ This section is providing capability to describe query templates to be later ref
 
 ## status_dashboard
 
-Configures URL and JWT secret for communication with the status dashboard.
+Configures the URL and the Zitadel OIDC service identity used for communication with the status dashboard.
 
 ```yaml
 status_dashboard:
   url: "https://status-dashboard.example.com"
-  secret: "your-jwt-secret"
+  oidc_issuer: "https://zitadel.example.com"
+  oidc_key_file: "/etc/cloudmon/service-account.json"
+  oidc_scopes:
+    - "urn:zitadel:iam:org:project:role:sd_reporters"
+    - "urn:zitadel:iam:org:project:id:<projectId>:aud"
 ```
 
-| Property | Type   | Required | Default | Description                           |
-|----------|--------|----------|---------|---------------------------------------|
-| `url`    | string | Yes      | -       | Status Dashboard API URL              |
-| `secret` | string | No       | -       | JWT signing secret for authentication |
+| Property       | Type     | Required | Default                                             | Description                                    |
+|----------------|----------|----------|-----------------------------------------------------|------------------------------------------------|
+| `url`          | string   | Yes      | -                                                   | Status Dashboard API URL                       |
+| `oidc_issuer`  | string   | Yes      | -                                                   | Zitadel issuer URL                             |
+| `oidc_key_file` | string  | Yes      | -                                                   | Path to the Zitadel machine user key file       |
+| `oidc_scopes`  | string[] | Yes      | -                                                   | Requested token scopes                         |
+
+The key file is the JSON key file downloaded from the Zitadel Console for a machine user
+(`type: serviceaccount`); the reporter delegates the JWT Profile exchange (assertion signing and
+token request) to the `zitadel` crate instead of authenticating with a client secret. The OIDC
+token endpoint is discovered from `{oidc_issuer}/.well-known/openid-configuration`.
+
+`oidc_scopes` has no default and has to list both a project role scope
+(`urn:zitadel:iam:org:project:role:<role>`) and the audience scope of the Zitadel project shared
+with the Status Dashboard (`urn:zitadel:iam:org:project:id:<projectId>:aud`, where `<projectId>` is
+the value the Status Dashboard uses for `SD_OIDC_CLIENT_ID`). The reporter rejects a list that
+misses either scope at startup, because Zitadel only reports the project roles claim when the
+audience scope is requested and the Status Dashboard rejects a token whose audience is the client
+id.
 
 ## health_query
 

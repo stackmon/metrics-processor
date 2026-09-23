@@ -25,7 +25,7 @@ graph TB
         
         subgraph Reporter["Reporter Binary"]
             Poller["Metric Poller<br/>(60s interval)"]
-            Notifier["Dashboard Notifier<br/>(JWT Auth)"]
+            Notifier["Dashboard Notifier<br/>(OIDC Auth)"]
         end
     end
     
@@ -168,8 +168,7 @@ graph TB
     end
     
     subgraph Auth["Authentication"]
-        JWT["jwt"]
-        HMAC["hmac + sha2"]
+        OidcToken["Zitadel OIDC token<br/>(reqwest)"]
     end
     
     subgraph Utilities["Utilities"]
@@ -190,8 +189,7 @@ graph TB
     Reporter --> Tokio
     Reporter --> Reqwest
     Reporter --> Serde
-    Reporter --> JWT
-    Reporter --> HMAC
+    Reporter --> OidcToken
     Reporter --> Tracing
     
     Axum --> Hyper
@@ -256,7 +254,7 @@ graph TB
             end
             
             CM["ConfigMap<br/>config.yaml"]
-            Secret["Secret<br/>JWT credentials"]
+            Secret["Secret<br/>OIDC client credentials"]
         end
     end
     
@@ -429,7 +427,9 @@ graph TD
         HM --> HM_Exprs["expressions: Vec"]
         
         Status --> Status_URL["url: String"]
-        Status --> Status_Secret["secret: Option<String>"]
+        Status --> Status_Issuer["oidc_issuer: Option<String>"]
+        Status --> Status_KeyFile["oidc_key_file: Option<String>"]
+        Status --> Status_Scopes["oidc_scopes: Option<Vec<String>>"]
     end
     
     style Config fill:#e8eaf6

@@ -459,11 +459,15 @@ ERROR cloudmon_metrics: Error during posting component status: error sending req
 **Cause:** Status dashboard is unreachable or misconfigured.
 
 **Solution:**
-1. Verify status dashboard URL:
+1. Verify status dashboard URL and service identity:
    ```yaml
    status_dashboard:
      url: https://status.cloudmon.com
-     secret: your-jwt-secret
+     oidc_issuer: https://zitadel.example.com
+     oidc_key_file: /etc/cloudmon/service-account.json
+     oidc_scopes:
+       - urn:zitadel:iam:org:project:role:sd_reporters
+       - urn:zitadel:iam:org:project:id:<projectId>:aud
    ```
 2. Test connectivity:
    ```bash

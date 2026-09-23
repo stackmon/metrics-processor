@@ -93,8 +93,9 @@ docker run -d \
   --name metrics-reporter \
   --network host \
   -v $(pwd)/config:/cloudmon/config:ro \
+  -v $(pwd)/secrets/service-account.json:/cloudmon/service-account.json:ro \
   -e RUST_LOG=info \
-  -e MP_STATUS_DASHBOARD__SECRET=your-jwt-secret \
+  -e MP_STATUS_DASHBOARD__OIDC_KEY_FILE=/cloudmon/service-account.json \
   metrics-processor:latest \
   /cloudmon/cloudmon-metrics-reporter
 ```
@@ -128,9 +129,10 @@ services:
     command: /cloudmon/cloudmon-metrics-reporter
     volumes:
       - ./config:/cloudmon/config:ro
+      - ./secrets/service-account.json:/cloudmon/service-account.json:ro
     environment:
       - RUST_LOG=info
-      - MP_STATUS_DASHBOARD__SECRET=${STATUS_DASHBOARD_SECRET}
+      - MP_STATUS_DASHBOARD__OIDC_KEY_FILE=/cloudmon/service-account.json
     depends_on:
       convertor:
         condition: service_healthy
@@ -221,7 +223,14 @@ metadata:
   namespace: monitoring
 type: Opaque
 stringData:
-  status-dashboard-secret: "your-jwt-secret-here"
+  # JSON key file downloaded from the Zitadel Console for the machine user
+  service-account.json: |
+    {
+      "type": "serviceaccount",
+      "keyId": "81693565968962154",
+      "key": "-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----",
+      "userId": "392040635458125910"
+    }
 ```
 
 ### Convertor Deployment
@@ -343,15 +352,16 @@ spec:
           env:
             - name: RUST_LOG
               value: "info"
-            - name: MP_STATUS_DASHBOARD__SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: metrics-processor-secrets
-                  key: status-dashboard-secret
+            - name: MP_STATUS_DASHBOARD__OIDC_KEY_FILE
+              value: /cloudmon/service-account.json
           volumeMounts:
             - name: config
               mountPath: /cloudmon/config.yaml
               subPath: config.yaml
+              readOnly: true
+            - name: service-account-key
+              mountPath: /cloudmon/service-account.json
+              subPath: service-account.json
               readOnly: true
           resources:
             requests:
@@ -364,6 +374,12 @@ spec:
         - name: config
           configMap:
             name: metrics-processor-config
+        - name: service-account-key
+          secret:
+            secretName: metrics-processor-secrets
+            items:
+              - key: service-account.json
+                path: service-account.json
 ```
 
 ### Ingress Configuration
@@ -461,8 +477,8 @@ health_metrics:
 Override configuration values using environment variables prefixed with `MP_`:
 
 ```bash
-# Override status dashboard secret
-export MP_STATUS_DASHBOARD__SECRET=production-secret
+# Override the Zitadel key file path
+export MP_STATUS_DASHBOARD__OIDC_KEY_FILE=/cloudmon/service-account.json
 
 # Override datasource URL
 export MP_DATASOURCE__URL=https://graphite-prod.example.com
@@ -494,8 +510,8 @@ configMapGenerator:
 
 secretGenerator:
   - name: metrics-processor-secrets
-    literals:
-      - status-dashboard-secret=your-secret
+    files:
+      - service-account.json=secrets/service-account.json
 
 images:
   - name: metrics-processor
@@ -682,7 +698,7 @@ The metrics-processor is **stateless**:
 
 2. **Dependencies:**
    - [ ] Graphite TSDB URL and credentials
-   - [ ] Status Dashboard URL and JWT secret
+   - [ ] Status Dashboard URL and OIDC service identity credentials
 
 3. **Recovery steps:**
    ```bash
@@ -797,10 +813,10 @@ spec:
   target:
     name: metrics-processor-secrets
   data:
-    - secretKey: status-dashboard-secret
+    - secretKey: service-account.json
       remoteRef:
         key: secret/metrics-processor
-        property: jwt-secret
+        property: status-dashboard-service-account-key
 ```
 
 ### Container Security

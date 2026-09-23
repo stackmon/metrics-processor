@@ -43,7 +43,7 @@ The Reporter is a background service that:
 - **Polls Convertor**: Queries the Convertor API at configurable intervals (default: 60s)
 - **Detects Issues**: Identifies when health status indicates degradation or outage
 - **Sends Notifications**: Posts status updates to external dashboards (e.g., Atlassian Statuspage)
-- **Handles Authentication**: Manages JWT tokens for secure dashboard communication
+- **Handles Authentication**: Obtains Zitadel OIDC service identity tokens for secure dashboard communication
 
 **Dependencies**:
 - Convertor API (localhost HTTP calls)
@@ -63,7 +63,7 @@ The Reporter is a background service that:
 **Role**: External consumer of health status
 
 - **Supported**: CloudMon Status Dashboard (custom API)
-- **Protocol**: REST API with JWT authentication
+- **Protocol**: REST API authenticated with Zitadel OIDC service identity tokens
 - **Data Format**: Component status with name, impact level, and attributes
 
 ## Key Design Decisions
@@ -256,15 +256,16 @@ src/
 
 ```bash
 # Environment variable example
-MP_STATUS_DASHBOARD__SECRET=my-jwt-secret
-# Translates to: status_dashboard.secret = "my-jwt-secret"
+MP_STATUS_DASHBOARD__OIDC_KEY_FILE=/etc/cloudmon/service-account.json
+# Translates to: status_dashboard.oidc_key_file = "/etc/cloudmon/service-account.json"
 ```
 
 ## Security Considerations
 
 ### Authentication
 
-- **Status Dashboard**: JWT tokens signed with HMAC-SHA256
+- **Status Dashboard**: Zitadel OIDC service identity tokens (JWT Profile exchange delegated to the
+  `zitadel` crate, machine user key file)
 - **Internal APIs**: No authentication (expected behind firewall)
 
 ### Network Security
@@ -274,7 +275,7 @@ MP_STATUS_DASHBOARD__SECRET=my-jwt-secret
 
 ### Configuration Secrets
 
-- Sensitive values (JWT secrets) should be injected via environment variables
+- Sensitive values (OIDC client secrets) should be injected via environment variables
 - Config files should not contain production secrets
 
 ## Performance Characteristics

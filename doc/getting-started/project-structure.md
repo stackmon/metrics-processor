@@ -76,7 +76,7 @@ Two independent executable binaries:
   - `GET /v1/health`: Query health metrics for services
   - `GET /v1/maintenances`: Query maintenance status
 - **Key types**: `HealthQuery`, `HealthResponse`, `MaintenancesResponse`
-- **Authentication**: JWT token validation for status dashboard
+- **Outbound authentication**: Zitadel OIDC service identity for reporter calls
 
 **When to edit**: Adding/modifying API endpoints, changing request/response formats
 
