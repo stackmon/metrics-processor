@@ -4,11 +4,324 @@
 //! T028-T037: Validate end-to-end Status Dashboard API integration with mocked endpoints
 
 use chrono::DateTime;
+use cloudmon_metrics::config::{OidcIdentity, StatusDashboardConfig};
 use cloudmon_metrics::sd::{
     build_auth_headers, build_component_id_cache, build_incident_data, create_incident,
     fetch_components, find_component_id, Component, ComponentAttribute, IncidentData,
     StatusDashboardComponent,
 };
+use mockito::Matcher;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+#[allow(dead_code)]
+#[path = "fixtures/service_account.rs"]
+mod service_account;
+use service_account::write_service_account_key_file;
+
+const AUTH_SCHEME: &str = "Bearer";
+const JWT_BEARER_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+/// Scope the `zitadel` crate always requests in addition to the configured scopes
+const OPENID_SCOPE: &str = "openid";
+const REPORTER_SCOPE: &str = "urn:zitadel:iam:org:project:role:sd_reporters";
+const AUDIENCE_SCOPE: &str = "urn:zitadel:iam:org:project:id:392066917738875090:aud";
+const TOKEN_RESPONSE: &str =
+    r#"{"access_token":"mock-access-token","token_type":"Bearer","expires_in":3600}"#;
+const OIDC_KEY_FILE_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_KEY_FILE";
+const OIDC_ISSUER_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_ISSUER";
+
+fn key_file() -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().expect("failed to create a temp dir");
+    let path = write_service_account_key_file(&dir.path().join("service-account.json"));
+
+    (dir, path)
+}
+
+fn status_dashboard_config(issuer: &str, key_file: &str) -> StatusDashboardConfig {
+    StatusDashboardConfig {
+        url: "https://status.example.com".to_string(),
+        oidc_issuer: Some(issuer.to_string()),
+        oidc_key_file: Some(key_file.to_string()),
+        oidc_scopes: vec![REPORTER_SCOPE.to_string()],
+    }
+}
+
+fn service_identity(issuer: &str) -> (tempfile::TempDir, OidcIdentity) {
+    let (dir, key_file) = key_file();
+    let identity = status_dashboard_config(issuer, &key_file)
+        .oidc_identity()
+        .expect("the key file must resolve a service identity");
+
+    (dir, identity)
+}
+
+#[derive(Clone, Debug)]
+struct TokenRequest {
+    method: String,
+    path: String,
+    body: String,
+    authorization: Option<String>,
+}
+
+impl TokenRequest {
+    fn capture(request: &mockito::Request) -> Self {
+        Self {
+            method: request.method().to_string(),
+            path: request.path().to_string(),
+            body: request
+                .body()
+                .map(|body| String::from_utf8_lossy(body).to_string())
+                .unwrap_or_default(),
+            authorization: request
+                .header("authorization")
+                .first()
+                .map(|value| value.to_string()),
+        }
+    }
+
+    fn form_field(&self, name: &str) -> Option<String> {
+        self.body.split('&').find_map(|pair| {
+            let (field, value) = pair.split_once('=')?;
+            (percent_decode(field) == name).then(|| percent_decode(value))
+        })
+    }
+
+    fn assertion(&self) -> String {
+        self.form_field("assertion")
+            .expect("the token request must carry an assertion")
+    }
+}
+
+struct OidcProvider {
+    discovery: mockito::Mock,
+    jwks: mockito::Mock,
+    token: TokenEndpoint,
+}
+
+impl OidcProvider {
+    /// The crate runs OIDC discovery and a JWKS fetch before every token request, so one metadata
+    /// request is served per token call.
+    async fn create(
+        server: &mut mockito::ServerGuard,
+        calls: usize,
+        status: usize,
+        response: impl Fn(usize) -> String + Send + Sync + 'static,
+    ) -> Self {
+        let (discovery, jwks) = mock_oidc_metadata(server, calls).await;
+
+        Self {
+            discovery,
+            jwks,
+            token: TokenEndpoint::create(server, calls, status, response).await,
+        }
+    }
+
+    async fn healthy(server: &mut mockito::ServerGuard, calls: usize) -> Self {
+        Self::create(server, calls, 200, |_| TOKEN_RESPONSE.to_string()).await
+    }
+
+    async fn assert(&self) {
+        self.discovery.assert_async().await;
+        self.jwks.assert_async().await;
+        self.token.assert().await;
+    }
+
+    fn requests(&self) -> Vec<TokenRequest> {
+        self.token.requests()
+    }
+}
+
+async fn mock_oidc_metadata(
+    server: &mut mockito::ServerGuard,
+    calls: usize,
+) -> (mockito::Mock, mockito::Mock) {
+    let url = server.url();
+    let document = serde_json::json!({
+        "issuer": url,
+        "authorization_endpoint": format!("{}/oauth/v2/authorize", url),
+        "token_endpoint": format!("{}/oauth/v2/token", url),
+        "jwks_uri": format!("{}/oauth/v2/keys", url),
+        "response_types_supported": ["code"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["RS256"],
+        "grant_types_supported": [
+            "authorization_code",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        ],
+    })
+    .to_string();
+
+    let discovery = server
+        .mock("GET", "/.well-known/openid-configuration")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(document)
+        .expect(calls)
+        .create_async()
+        .await;
+
+    // The reporter never verifies the token itself, so an empty key set is enough
+    let jwks = server
+        .mock("GET", "/oauth/v2/keys")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"keys":[]}"#)
+        .expect(calls)
+        .create_async()
+        .await;
+
+    (discovery, jwks)
+}
+
+struct TokenEndpoint {
+    mock: mockito::Mock,
+    requests: Arc<Mutex<Vec<TokenRequest>>>,
+}
+
+impl TokenEndpoint {
+    async fn create(
+        server: &mut mockito::ServerGuard,
+        calls: usize,
+        status: usize,
+        response: impl Fn(usize) -> String + Send + Sync + 'static,
+    ) -> Self {
+        let requests: Arc<Mutex<Vec<TokenRequest>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&requests);
+        let served = Arc::new(AtomicUsize::new(0));
+        let call_counter = Arc::clone(&served);
+
+        let mock = server
+            .mock("POST", "/oauth/v2/token")
+            .match_header("content-type", "application/x-www-form-urlencoded")
+            // The JWT profile flow must never fall back to HTTP Basic auth
+            .match_header("authorization", Matcher::Missing)
+            .with_status(status)
+            .with_header("content-type", "application/json")
+            .with_body_from_request(move |request| {
+                let call = call_counter.fetch_add(1, Ordering::SeqCst) + 1;
+                recorder
+                    .lock()
+                    .expect("token request recorder is poisoned")
+                    .push(TokenRequest::capture(request));
+                response(call).into_bytes()
+            })
+            .expect(calls)
+            .create_async()
+            .await;
+
+        Self { mock, requests }
+    }
+
+    async fn assert(&self) {
+        self.mock.assert_async().await;
+    }
+
+    fn requests(&self) -> Vec<TokenRequest> {
+        self.requests
+            .lock()
+            .expect("token request recorder is poisoned")
+            .clone()
+    }
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[index + 1..index + 3])
+                    .expect("form encoding is not valid UTF-8");
+                decoded.push(u8::from_str_radix(hex, 16).expect("invalid percent encoding"));
+                index += 3;
+            }
+            byte => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+
+    String::from_utf8(decoded).expect("form encoded value is not valid UTF-8")
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AssertionClaims {
+    iss: String,
+    sub: String,
+    aud: String,
+    iat: i64,
+    exp: i64,
+}
+
+fn verified_assertion_claims(assertion: &str) -> AssertionClaims {
+    let header = jsonwebtoken::decode_header(assertion).expect("the assertion must be a JWS");
+    assert_eq!(header.alg, jsonwebtoken::Algorithm::RS256);
+    assert_eq!(header.kid.as_deref(), Some(service_account::KEY_ID));
+
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.validate_aud = false;
+
+    jsonwebtoken::decode::<AssertionClaims>(
+        assertion,
+        &jsonwebtoken::DecodingKey::from_rsa_pem(service_account::public_key_pem().as_bytes())
+            .expect("the derived public key must be a valid PEM RSA key"),
+        &validation,
+    )
+    .expect("the assertion must verify against the public key of the key file")
+    .claims
+}
+
+#[tokio::test]
+async fn test_build_auth_headers() {
+    let mut server = mockito::Server::new_async().await;
+    let provider = OidcProvider::healthy(&mut server, 1).await;
+
+    let (_key_dir, identity) = service_identity(&server.url());
+
+    let headers = build_auth_headers(&identity).await.unwrap();
+
+    let auth_value = headers.get(reqwest::header::AUTHORIZATION).unwrap();
+    assert_eq!(
+        auth_value.to_str().unwrap(),
+        format!("{} mock-access-token", AUTH_SCHEME)
+    );
+
+    provider.assert().await;
+
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 1, "exactly one token request is expected");
+
+    let request = &requests[0];
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, "/oauth/v2/token");
+    assert_eq!(
+        request.form_field("grant_type").as_deref(),
+        Some(JWT_BEARER_GRANT_TYPE)
+    );
+    // The crate always attaches the openid scope before the configured ones
+    assert_eq!(
+        request.form_field("scope").as_deref(),
+        Some(format!("{} {}", OPENID_SCOPE, REPORTER_SCOPE).as_str())
+    );
+    assert_eq!(
+        request.authorization, None,
+        "the token request must not authenticate with HTTP Basic"
+    );
+
+    let claims = verified_assertion_claims(&request.assertion());
+    assert_eq!(claims.iss, service_account::USER_ID);
+    assert_eq!(claims.sub, service_account::USER_ID);
+    assert_eq!(claims.aud, server.url());
+    assert_eq!(claims.exp - claims.iat, 3600);
+}
 
 /// T029: Test fetch_components_success - verify component fetching and parsing
 #[tokio::test]
@@ -470,20 +783,197 @@ fn test_multiple_components_same_name() {
     assert_eq!(find_component_id(&cache, &target_nl), Some(200));
 }
 
-/// Test build_auth_headers - verify JWT token generation
-#[test]
-fn test_build_auth_headers() {
-    // Test with secret
-    let headers = build_auth_headers(Some("test-secret"));
-    assert!(headers.contains_key(reqwest::header::AUTHORIZATION));
+#[tokio::test]
+async fn test_build_auth_headers_multiple_scopes() {
+    let mut server = mockito::Server::new_async().await;
+    let provider = OidcProvider::healthy(&mut server, 1).await;
+
+    let (_key_dir, key_file) = key_file();
+    let mut cfg = status_dashboard_config(&server.url(), &key_file);
+    cfg.oidc_scopes = vec![REPORTER_SCOPE.to_string(), AUDIENCE_SCOPE.to_string()];
+
+    let expected_scope = format!("{} {} {}", OPENID_SCOPE, REPORTER_SCOPE, AUDIENCE_SCOPE);
+    let identity = cfg.oidc_identity().unwrap();
+
+    let headers = build_auth_headers(&identity).await.unwrap();
 
     let auth_value = headers.get(reqwest::header::AUTHORIZATION).unwrap();
-    let auth_str = auth_value.to_str().unwrap();
-    assert!(auth_str.starts_with("Bearer "));
+    assert_eq!(
+        auth_value.to_str().unwrap(),
+        format!("{} mock-access-token", AUTH_SCHEME)
+    );
 
-    // Test without secret (optional auth)
-    let headers_empty = build_auth_headers(None);
-    assert!(!headers_empty.contains_key(reqwest::header::AUTHORIZATION));
+    provider.assert().await;
+
+    let requests = provider.requests();
+    assert_eq!(
+        requests[0].form_field("scope").as_deref(),
+        Some(expected_scope.as_str()),
+        "the scopes must be joined by a single space, in the configured order"
+    );
+    assert_eq!(
+        requests[0].body.matches("scope=").count(),
+        1,
+        "the scope must be sent as exactly one field: {}",
+        requests[0].body
+    );
+}
+
+#[tokio::test]
+async fn test_build_auth_headers_without_configured_scopes() {
+    let mut server = mockito::Server::new_async().await;
+    let provider = OidcProvider::healthy(&mut server, 1).await;
+
+    let (_key_dir, key_file) = key_file();
+    let mut cfg = status_dashboard_config(&server.url(), &key_file);
+    cfg.oidc_scopes = Vec::new();
+
+    let identity = cfg.oidc_identity().unwrap();
+
+    build_auth_headers(&identity).await.unwrap();
+
+    provider.assert().await;
+
+    assert_eq!(
+        provider.requests()[0].form_field("scope").as_deref(),
+        Some(OPENID_SCOPE)
+    );
+}
+
+#[tokio::test]
+async fn test_build_auth_headers_token_endpoint_error() {
+    for status in [400usize, 401, 500, 503] {
+        let mut server = mockito::Server::new_async().await;
+        let provider = OidcProvider::create(&mut server, 1, status, |_| {
+            r#"{"error":"invalid_client"}"#.to_string()
+        })
+        .await;
+
+        let (_key_dir, identity) = service_identity(&server.url());
+
+        let err = build_auth_headers(&identity).await.unwrap_err();
+        let message = format!("{:#}", err);
+        let assertion = provider.requests()[0].assertion();
+
+        assert!(
+            message.contains(&format!("{}/oauth/v2/token", server.url())),
+            "status {}: the failing endpoint is missing from the error: {}",
+            status,
+            message
+        );
+        assert!(
+            !message.contains(&assertion),
+            "the signed assertion leaked into the error: {}",
+            message
+        );
+        assert!(
+            !message.contains("PRIVATE KEY"),
+            "key material leaked into the error: {}",
+            message
+        );
+
+        provider.assert().await;
+    }
+}
+
+#[tokio::test]
+async fn test_build_auth_headers_without_a_usable_access_token() {
+    for body in [
+        r#"{"token_type":"Bearer","expires_in":3600}"#,
+        r#"{"access_token":"","token_type":"Bearer"}"#,
+        r#"{"access_token":null,"token_type":"Bearer"}"#,
+        "not json at all",
+    ] {
+        let mut server = mockito::Server::new_async().await;
+        let provider = OidcProvider::create(&mut server, 1, 200, move |_| body.to_string()).await;
+
+        let (_key_dir, identity) = service_identity(&server.url());
+
+        let err = build_auth_headers(&identity)
+            .await
+            .expect_err("a response without a usable access token must be an error");
+        let message = format!("{:#}", err);
+
+        assert!(
+            !message.contains("Bearer "),
+            "an unusable access token produced credentials: {}",
+            message
+        );
+        assert!(
+            message.contains(&format!("{}/oauth/v2/token", server.url())),
+            "unexpected error: {}",
+            message
+        );
+
+        provider.assert().await;
+    }
+}
+
+#[test]
+fn test_oidc_identity_requires_all_credentials() {
+    let (_key_dir, key_file) = key_file();
+    let complete = status_dashboard_config("https://zitadel.example.com", &key_file);
+    assert!(complete.oidc_identity().is_ok());
+
+    let cases = [
+        (
+            StatusDashboardConfig {
+                oidc_issuer: None,
+                ..complete.clone()
+            },
+            OIDC_ISSUER_ENV_KEY,
+        ),
+        (
+            StatusDashboardConfig {
+                oidc_key_file: None,
+                ..complete.clone()
+            },
+            OIDC_KEY_FILE_ENV_KEY,
+        ),
+        (
+            StatusDashboardConfig {
+                oidc_issuer: None,
+                oidc_key_file: None,
+                ..complete.clone()
+            },
+            OIDC_KEY_FILE_ENV_KEY,
+        ),
+    ];
+
+    for (cfg, expected_key) in cases {
+        let message = format!("{:#}", cfg.oidc_identity().unwrap_err());
+        assert!(
+            message.contains(expected_key),
+            "missing {} not reported: {}",
+            expected_key,
+            message
+        );
+    }
+
+    let all_missing = StatusDashboardConfig {
+        oidc_issuer: None,
+        oidc_key_file: None,
+        ..complete.clone()
+    };
+    let message = format!("{:#}", all_missing.oidc_identity().unwrap_err());
+    for key in [OIDC_ISSUER_ENV_KEY, OIDC_KEY_FILE_ENV_KEY] {
+        assert!(
+            message.contains(key),
+            "missing {} not reported: {}",
+            key,
+            message
+        );
+    }
+}
+
+#[test]
+fn test_status_dashboard_default_oidc_scopes() {
+    let cfg: StatusDashboardConfig =
+        serde_yaml::from_str("url: https://status.example.com\n").unwrap();
+
+    assert_eq!(cfg.oidc_scopes, vec![REPORTER_SCOPE.to_string()]);
+    assert!(cfg.oidc_issuer.is_none());
+    assert!(cfg.oidc_key_file.is_none());
 }
 
 /// Test create_incident failure - verify error handling when API returns error
@@ -553,4 +1043,275 @@ async fn test_fetch_components_failure() {
     );
 
     mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn test_authenticated_requests_fetch_a_fresh_service_token() {
+    assert_fresh_token_per_authenticated_request().await;
+}
+
+/// The crate signs assertions with a second-resolution `iat` and no `jti`, so two acquisitions in
+/// the same second yield the same assertion; crossing the boundary makes freshness observable.
+async fn wait_for_next_second() {
+    let elapsed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the system clock must be after the unix epoch");
+
+    tokio::time::sleep(Duration::from_millis(
+        u64::from(1000 - elapsed.subsec_millis()) + 50,
+    ))
+    .await;
+}
+
+async fn assert_fresh_token_per_authenticated_request() {
+    let mut server = mockito::Server::new_async().await;
+
+    let provider = OidcProvider::create(&mut server, 2, 200, |call| {
+        format!(
+            r#"{{"access_token":"fresh-token-{}","token_type":"Bearer","expires_in":3600}}"#,
+            call
+        )
+    })
+    .await;
+
+    let components_body = r#"[{"id":218,"name":"Object Storage Service","attributes":[{"name":"region","value":"EU-DE"}]}]"#;
+
+    let component_report = server
+        .mock("GET", "/v2/components")
+        .match_header(
+            "authorization",
+            Matcher::Exact(format!("{} fresh-token-1", AUTH_SCHEME)),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(components_body)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let incident_report = server
+        .mock("POST", "/v2/events")
+        .match_header(
+            "authorization",
+            Matcher::Exact(format!("{} fresh-token-2", AUTH_SCHEME)),
+        )
+        .match_header("content-type", "application/json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"result":[{"component_id":218,"incident_id":456}]}"#)
+        .expect(1)
+        .create_async()
+        .await;
+
+    let client = reqwest::Client::new();
+    let (_key_dir, identity) = service_identity(&server.url());
+
+    let headers = build_auth_headers(&identity).await.unwrap();
+    fetch_components(&client, &server.url(), &headers)
+        .await
+        .expect("the component fetch must use the token fetched for it");
+
+    wait_for_next_second().await;
+
+    let headers = build_auth_headers(&identity).await.unwrap();
+    create_incident(
+        &client,
+        &server.url(),
+        &headers,
+        &build_incident_data(218, 2, 1705929045),
+    )
+    .await
+    .expect("the incident report must use the token fetched for it");
+
+    let requests = provider.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "the token endpoint must be called once per authenticated request"
+    );
+
+    let assertions = [requests[0].assertion(), requests[1].assertion()];
+    assert_ne!(
+        assertions[0], assertions[1],
+        "every token request must carry its own freshly signed assertion"
+    );
+
+    provider.assert().await;
+    component_report.assert_async().await;
+    incident_report.assert_async().await;
+}
+
+#[tokio::test]
+async fn test_no_status_dashboard_request_when_service_token_fails() {
+    let mut server = mockito::Server::new_async().await;
+
+    let provider = OidcProvider::create(&mut server, 1, 503, |_| {
+        r#"{"error":"temporarily_unavailable"}"#.to_string()
+    })
+    .await;
+
+    let components_mock = server
+        .mock("GET", "/v2/components")
+        .expect(0)
+        .create_async()
+        .await;
+    let events_mock = server
+        .mock("POST", "/v2/events")
+        .expect(0)
+        .create_async()
+        .await;
+
+    let (_key_dir, identity) = service_identity(&server.url());
+
+    let err = build_auth_headers(&identity)
+        .await
+        .expect_err("a failing token endpoint must not provide authorization headers");
+    let message = format!("{:#}", err);
+
+    assert!(
+        message.contains(&format!("{}/oauth/v2/token", server.url())),
+        "the failing token endpoint is missing from the error: {}",
+        message
+    );
+    assert!(
+        !message.contains(&provider.requests()[0].assertion()),
+        "the signed assertion leaked into the error: {}",
+        message
+    );
+    assert!(
+        !message.contains("PRIVATE KEY"),
+        "key material leaked into the error: {}",
+        message
+    );
+
+    provider.assert().await;
+    components_mock.assert_async().await;
+    events_mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn test_reporter_exits_non_zero_on_fatal_startup_error() {
+    let mut server = mockito::Server::new_async().await;
+
+    let provider = OidcProvider::create(&mut server, 1, 503, |_| {
+        r#"{"error":"temporarily_unavailable"}"#.to_string()
+    })
+    .await;
+
+    let components_mock = server
+        .mock("GET", "/v2/components")
+        .expect(0)
+        .create_async()
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let key_file = write_service_account_key_file(&dir.path().join("service-account.json"));
+
+    let config = format!(
+        r#"---
+datasource:
+  url: '{url}'
+server:
+  port: 3005
+environments:
+  - name: test-env
+flag_metrics: []
+health_metrics: {{}}
+status_dashboard:
+  url: '{url}'
+  oidc_issuer: '{url}'
+  oidc_key_file: '{key_file}'
+"#,
+        url = server.url(),
+        key_file = key_file,
+    );
+
+    std::fs::write(dir.path().join("config.yaml"), config).unwrap();
+
+    let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_cloudmon-metrics-reporter"))
+        .current_dir(dir.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start cloudmon-metrics-reporter");
+
+    let output = tokio::time::timeout(Duration::from_secs(60), child.wait_with_output())
+        .await
+        .expect("the reporter did not exit on a fatal error")
+        .expect("failed to collect reporter output");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a fatal error must exit non-zero, stdout: {}, stderr: {}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stderr.contains("metric reporter failed"),
+        "unexpected error output: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("PRIVATE KEY") && !stdout.contains("PRIVATE KEY"),
+        "key material leaked into the reporter output"
+    );
+    assert!(
+        !stderr.contains(&provider.requests()[0].assertion()),
+        "the signed assertion leaked into the reporter output"
+    );
+
+    provider.assert().await;
+    components_mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn test_reporter_reports_an_unusable_service_account_key_file() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let config = r#"---
+datasource:
+  url: 'http://127.0.0.1:1'
+server:
+  port: 3005
+environments:
+  - name: test-env
+flag_metrics: []
+health_metrics: {}
+status_dashboard:
+  url: 'http://127.0.0.1:1'
+  oidc_issuer: 'http://127.0.0.1:1'
+  oidc_key_file: 'service-account.json'
+"#;
+
+    std::fs::write(dir.path().join("config.yaml"), config).unwrap();
+
+    let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_cloudmon-metrics-reporter"))
+        .current_dir(dir.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start cloudmon-metrics-reporter");
+
+    let output = tokio::time::timeout(Duration::from_secs(60), child.wait_with_output())
+        .await
+        .expect("the reporter did not exit on a missing key file")
+        .expect("failed to collect reporter output");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "a missing key file must fail closed, stderr: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains(OIDC_KEY_FILE_ENV_KEY),
+        "the failing configuration key must be named: {}",
+        stderr
+    );
 }

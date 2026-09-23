@@ -15,3 +15,5 @@ pub mod configs;
 pub mod graphite_responses;
 #[allow(dead_code)]
 pub mod helpers;
+#[allow(dead_code)]
+pub mod service_account;

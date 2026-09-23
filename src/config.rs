@@ -37,6 +37,7 @@
 
 use glob::glob;
 
+use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
@@ -45,9 +46,10 @@ use std::{
     path::Path,
 };
 
-use config::{ConfigError, Environment, File};
-
+use crate::oidc::{load_service_account, normalize_issuer};
 use crate::types::{BinaryMetricRawDef, EnvironmentDef, FlagMetricDef, ServiceHealthDef};
+use config::{ConfigError, Environment, File};
+use zitadel::credentials::ServiceAccount;
 
 /// A Configuration structure
 #[derive(Clone, Debug, Deserialize, JsonSchema)]
@@ -100,7 +102,7 @@ impl Config {
         }
 
         // merge environment variables (subelements separated by "__")
-        // MP_STATUS_DASHBOARD__SECRET goes to status_dashboard.secret
+
         s = s.add_source(
             Environment::with_prefix("MP")
                 .prefix_separator("_")
@@ -175,8 +177,93 @@ pub enum DatasourceType {
 pub struct StatusDashboardConfig {
     /// Status dashboard URL
     pub url: String,
-    /// JWT token signature secret
-    pub secret: Option<String>,
+    /// Zitadel OIDC issuer URL
+    pub oidc_issuer: Option<String>,
+    /// Path to the Zitadel machine user key file.
+    ///
+    /// The file is downloaded from the Zitadel Console for a machine user (service user) and has
+    /// `type: serviceaccount`; it is read once at startup and any other key type fails startup.
+    pub oidc_key_file: Option<String>,
+    /// OIDC scopes of the token request, sent as one space-joined `scope` parameter.
+    ///
+    /// `MP_STATUS_DASHBOARD__OIDC_SCOPES` has to contain both
+    /// `urn:zitadel:iam:org:project:role:sd_reporters`, so that the roles are reported in the
+    /// `groups` claim, and `urn:zitadel:iam:org:project:id:<projectId>:aud`, which makes `aud` the
+    /// project id the Status Dashboard verifies against `SD_OIDC_CLIENT_ID`. `<projectId>` is the
+    /// Zitadel project shared by the Status Dashboard and the machine user. Without the audience
+    /// scope Zitadel puts the client id into `aud`, which the backend rejects.
+    #[serde(default = "default_oidc_scopes")]
+    pub oidc_scopes: Vec<String>,
+}
+
+pub const OIDC_ISSUER_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_ISSUER";
+pub const OIDC_KEY_FILE_ENV_KEY: &str = "MP_STATUS_DASHBOARD__OIDC_KEY_FILE";
+
+pub struct OidcIdentity {
+    pub issuer: String,
+    pub service_account: ServiceAccount,
+    pub scopes: Vec<String>,
+}
+
+impl std::fmt::Debug for OidcIdentity {
+    /// The crate renders the loaded key material in its own `Debug` output, so it is not forwarded.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcIdentity")
+            .field("issuer", &self.issuer)
+            .field("service_account", &"<redacted>")
+            .field("scopes", &self.scopes)
+            .finish()
+    }
+}
+
+impl StatusDashboardConfig {
+    /// Reporting is fail-closed: an incomplete identity must stop startup, so every problem names
+    /// the offending configuration key.
+    pub fn oidc_identity(&self) -> anyhow::Result<OidcIdentity> {
+        if let (Some(issuer), Some(key_file_path)) =
+            (self.oidc_issuer.as_deref(), self.oidc_key_file.as_deref())
+        {
+            if !issuer.trim().is_empty() && !key_file_path.trim().is_empty() {
+                let service_account = load_service_account(key_file_path).with_context(|| {
+                    format!(
+                        "{} does not point to a usable Zitadel machine user key file",
+                        OIDC_KEY_FILE_ENV_KEY
+                    )
+                })?;
+
+                return Ok(OidcIdentity {
+                    issuer: normalize_issuer(issuer),
+                    service_account,
+                    scopes: self.oidc_scopes.clone(),
+                });
+            }
+        }
+
+        let mut missing = Vec::new();
+        if self
+            .oidc_issuer
+            .as_deref()
+            .is_none_or(|issuer| issuer.trim().is_empty())
+        {
+            missing.push(OIDC_ISSUER_ENV_KEY);
+        }
+        if self
+            .oidc_key_file
+            .as_deref()
+            .is_none_or(|key_file| key_file.trim().is_empty())
+        {
+            missing.push(OIDC_KEY_FILE_ENV_KEY);
+        }
+
+        anyhow::bail!(
+            "Status Dashboard OIDC service identity is incomplete, missing: {}",
+            missing.join(", ")
+        )
+    }
+}
+
+fn default_oidc_scopes() -> Vec<String> {
+    vec!["urn:zitadel:iam:org:project:role:sd_reporters".to_string()]
 }
 
 /// Health metrics query configuration
@@ -314,12 +401,15 @@ mod test {
 
         config_file.write_all(CONFIG_STR1.as_bytes()).unwrap();
 
-        env::set_var("MP_STATUS_DASHBOARD__SECRET", "val");
+        env::set_var("MP_STATUS_DASHBOARD__OIDC_KEY_FILE", "val");
         let _config = config::Config::new(config_file.path().to_str().unwrap()).unwrap();
-        assert_eq!(_config.status_dashboard.unwrap().secret.unwrap(), "val");
+        assert_eq!(
+            _config.status_dashboard.unwrap().oidc_key_file.unwrap(),
+            "val"
+        );
 
         // Clean up to avoid affecting other tests
-        env::remove_var("MP_STATUS_DASHBOARD__SECRET");
+        env::remove_var("MP_STATUS_DASHBOARD__OIDC_KEY_FILE");
     }
 
     /// Test merging of the config with conf.d elements
@@ -532,5 +622,200 @@ mod test {
         fs::write(&schema_path, &schema_json).expect("Failed to write config-schema.json");
 
         println!("Generated JSON schema at: {}", schema_path.display());
+    }
+
+    fn status_dashboard_section() -> super::StatusDashboardConfig {
+        serde_yaml::from_str("url: https://status.example.com\n").unwrap()
+    }
+
+    fn write_key_file(dir: &tempfile::TempDir) -> String {
+        use crate::oidc::test_keys::service_account_key_file_json;
+
+        let path = dir.path().join("service-account.json");
+        std::fs::write(&path, service_account_key_file_json()).unwrap();
+        path.to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn test_oidc_identity_reports_missing_configuration_keys() {
+        let both_missing = status_dashboard_section();
+        let message = format!("{:#}", both_missing.oidc_identity().unwrap_err());
+        for key in [super::OIDC_ISSUER_ENV_KEY, super::OIDC_KEY_FILE_ENV_KEY] {
+            assert!(message.contains(key), "{} not reported: {}", key, message);
+        }
+
+        let key_file_missing = super::StatusDashboardConfig {
+            oidc_issuer: Some("https://zitadel.example.com".to_string()),
+            ..status_dashboard_section()
+        };
+        let message = format!("{:#}", key_file_missing.oidc_identity().unwrap_err());
+        assert!(
+            message.contains(super::OIDC_KEY_FILE_ENV_KEY),
+            "unexpected error: {}",
+            message
+        );
+        assert!(
+            !message.contains(super::OIDC_ISSUER_ENV_KEY),
+            "unexpected error: {}",
+            message
+        );
+
+        let issuer_missing = super::StatusDashboardConfig {
+            oidc_key_file: Some("service-account.json".to_string()),
+            ..status_dashboard_section()
+        };
+        let message = format!("{:#}", issuer_missing.oidc_identity().unwrap_err());
+        assert!(
+            message.contains(super::OIDC_ISSUER_ENV_KEY),
+            "unexpected error: {}",
+            message
+        );
+        assert!(
+            !message.contains(super::OIDC_KEY_FILE_ENV_KEY),
+            "unexpected error: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn test_oidc_identity_reports_the_failing_key_file() {
+        use crate::oidc::test_keys::{
+            application_key_file_json, key_file_json_with_type, KEY_ID, USER_ID,
+        };
+
+        let dir = Builder::new().tempdir().unwrap();
+
+        let invalid_json = dir.path().join("invalid.json");
+        std::fs::write(&invalid_json, "{ not json }").unwrap();
+
+        let unknown_type = dir.path().join("unknown-type.json");
+        std::fs::write(&unknown_type, key_file_json_with_type("widget")).unwrap();
+
+        let application = dir.path().join("application.json");
+        std::fs::write(&application, application_key_file_json()).unwrap();
+
+        let empty_user = dir.path().join("empty-user.json");
+        std::fs::write(
+            &empty_user,
+            serde_json::json!({
+                "type": "serviceaccount",
+                "keyId": KEY_ID,
+                "key": "-----BEGIN",
+                "userId": "",
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let empty_key = dir.path().join("empty-key.json");
+        std::fs::write(
+            &empty_key,
+            serde_json::json!({
+                "type": "serviceaccount",
+                "keyId": KEY_ID,
+                "key": "",
+                "userId": USER_ID,
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let cases = [
+            dir.path().join("does-not-exist.json"),
+            invalid_json,
+            unknown_type,
+            application,
+            empty_user,
+            empty_key,
+        ];
+        let mut messages = Vec::new();
+
+        for path in cases {
+            let config = super::StatusDashboardConfig {
+                oidc_issuer: Some("https://zitadel.example.com".to_string()),
+                oidc_key_file: Some(path.to_str().unwrap().to_string()),
+                ..status_dashboard_section()
+            };
+
+            let message = format!("{:#}", config.oidc_identity().unwrap_err());
+            assert!(
+                message.contains(super::OIDC_KEY_FILE_ENV_KEY),
+                "{} not reported: {}",
+                super::OIDC_KEY_FILE_ENV_KEY,
+                message
+            );
+            messages.push(message);
+        }
+
+        assert!(
+            messages[0].contains("cannot be read"),
+            "unexpected error: {}",
+            messages[0]
+        );
+        assert!(
+            messages[1].contains("not valid JSON"),
+            "unexpected error: {}",
+            messages[1]
+        );
+        for index in [2, 3] {
+            assert!(
+                messages[index].contains("serviceaccount"),
+                "unexpected error: {}",
+                messages[index]
+            );
+        }
+        assert!(
+            messages[4].contains("empty userId"),
+            "unexpected error: {}",
+            messages[4]
+        );
+        assert!(
+            messages[5].contains("empty key"),
+            "unexpected error: {}",
+            messages[5]
+        );
+
+        for (index, message) in messages.iter().enumerate() {
+            assert!(
+                !messages[..index].contains(message),
+                "error messages are not distinguishable: {}",
+                message
+            );
+        }
+    }
+
+    #[test]
+    fn test_oidc_identity_loads_the_key_file_and_normalizes_the_issuer() {
+        let dir = Builder::new().tempdir().unwrap();
+        let key_file = write_key_file(&dir);
+
+        let config = super::StatusDashboardConfig {
+            oidc_issuer: Some("https://zitadel.example.com/".to_string()),
+            oidc_key_file: Some(key_file.clone()),
+            ..status_dashboard_section()
+        };
+
+        let identity = config.oidc_identity().unwrap();
+
+        assert_eq!(identity.issuer, "https://zitadel.example.com");
+        assert_eq!(
+            identity.token_url(),
+            "https://zitadel.example.com/oauth/v2/token"
+        );
+        let rendered = format!("{:?}", identity);
+        assert!(
+            rendered.contains("https://zitadel.example.com"),
+            "unexpected debug output: {}",
+            rendered
+        );
+        assert!(
+            !rendered.contains("PRIVATE KEY") && !rendered.contains("key_id"),
+            "key material leaked into debug output: {}",
+            rendered
+        );
+        assert_eq!(
+            identity.scopes,
+            vec!["urn:zitadel:iam:org:project:role:sd_reporters".to_string()]
+        );
     }
 }

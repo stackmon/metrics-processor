@@ -6,6 +6,8 @@
 
 extern crate anyhow;
 
+use anyhow::Context;
+use cloudmon_metrics::config::OidcIdentity;
 use cloudmon_metrics::sd::{
     build_auth_headers, build_component_id_cache, build_incident_data, create_incident,
     fetch_components, find_component_id, Component, ComponentAttribute,
@@ -34,7 +36,7 @@ pub struct ComponentStatus {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     //Enable logging
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -46,7 +48,15 @@ async fn main() {
     tracing::info!("starting cloudmon-metrics-reporter");
 
     // Parse config
-    let config = Config::new("config.yaml").unwrap();
+    let config = Config::new("config.yaml").context("Failed to load config.yaml")?;
+
+    // Fail closed: the service identity comes from the key file, which is read here once at startup
+    let oidc_identity = config
+        .status_dashboard
+        .as_ref()
+        .map(|sdb_config| sdb_config.oidc_identity())
+        .transpose()
+        .context("Invalid status_dashboard OIDC configuration")?;
 
     // Set up CTRL+C handlers
     let ctrl_c = async {
@@ -68,15 +78,26 @@ async fn main() {
 
     // Execute metric_watcher unless need to stop
     tokio::select! {
-        _ = metric_watcher(&config) => {},
+        res = metric_watcher(&config, oidc_identity.as_ref()) => {
+            if let Err(e) = &res {
+                tracing::error!(error = %e, "metric reporter stopped with an error");
+            }
+            // Fatal reporter errors must terminate the process with a non-zero exit code
+            res.context("metric reporter failed")?;
+        },
         _ = ctrl_c => {},
         _ = terminate => {},
     }
 
     tracing::info!("stopped cloudmon-metrics-reporter");
+
+    Ok(())
 }
 
-async fn metric_watcher(config: &Config) {
+async fn metric_watcher(
+    config: &Config,
+    oidc_identity: Option<&OidcIdentity>,
+) -> anyhow::Result<()> {
     tracing::info!("starting metric reporter thread");
     // Init reqwest client
     let req_client: reqwest::Client = ClientBuilder::new()
@@ -118,10 +139,8 @@ async fn metric_watcher(config: &Config) {
         .status_dashboard
         .as_ref()
         .expect("Status dashboard section is missing");
-
-    // Build authorization headers using status_dashboard module (T021, T022, T023 - US3)
-    // VERIFIED: Existing HMAC-JWT mechanism works unchanged with V2 endpoints
-    let headers = build_auth_headers(sdb_config.secret.as_deref());
+    let oidc_identity =
+        oidc_identity.context("Status Dashboard OIDC service identity is missing")?;
 
     // Initialize component ID cache at startup with retry logic (T024, T025, T026, T027)
     // Per FR-006: 3 retry attempts with 60-second delays
@@ -135,6 +154,11 @@ async fn metric_watcher(config: &Config) {
             max_attempts = max_attempts,
             "attempting to fetch components from Status Dashboard"
         );
+
+        // D6: a fresh token is requested per authenticated call, it is never reused or cached
+        let headers = build_auth_headers(oidc_identity)
+            .await
+            .context("Failed to obtain Status Dashboard authorization headers")?;
 
         match fetch_components(&req_client, &sdb_config.url, &headers).await {
             Ok(components) => {
@@ -175,8 +199,7 @@ async fn metric_watcher(config: &Config) {
     let mut component_cache = match component_cache {
         Some(cache) => cache,
         None => {
-            tracing::error!("component cache initialization failed, exiting metric_watcher");
-            return;
+            anyhow::bail!("component cache initialization failed, exiting metric_watcher");
         }
     };
 
@@ -235,31 +258,45 @@ async fn metric_watcher(config: &Config) {
                                                     "component not found in cache, attempting cache refresh"
                                                 );
 
-                                                match fetch_components(
-                                                    &req_client,
-                                                    &sdb_config.url,
-                                                    &headers,
-                                                )
-                                                .await
-                                                {
-                                                    Ok(components) => {
-                                                        tracing::info!(
-                                                            component_count = components.len(),
-                                                            "cache refreshed"
-                                                        );
-                                                        component_cache =
-                                                            build_component_id_cache(components);
-                                                        // Retry lookup after refresh
-                                                        component_id = find_component_id(
-                                                            &component_cache,
-                                                            comp,
-                                                        );
+                                                match build_auth_headers(oidc_identity).await {
+                                                    Ok(headers) => {
+                                                        match fetch_components(
+                                                            &req_client,
+                                                            &sdb_config.url,
+                                                            &headers,
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(components) => {
+                                                                tracing::info!(
+                                                                    component_count =
+                                                                        components.len(),
+                                                                    "cache refreshed"
+                                                                );
+                                                                component_cache =
+                                                                    build_component_id_cache(
+                                                                        components,
+                                                                    );
+                                                                component_id = find_component_id(
+                                                                    &component_cache,
+                                                                    comp,
+                                                                );
+                                                            }
+                                                            Err(e) => {
+                                                                tracing::warn!(
+                                                                    error = %e,
+                                                                    component_name =
+                                                                        comp.name.as_str(),
+                                                                    "failed to refresh component cache"
+                                                                );
+                                                            }
+                                                        }
                                                     }
                                                     Err(e) => {
-                                                        tracing::warn!(
+                                                        tracing::error!(
                                                             error = %e,
                                                             component_name = comp.name.as_str(),
-                                                            "failed to refresh component cache"
+                                                            "failed to obtain authorization headers, skipping component cache refresh"
                                                         );
                                                     }
                                                 }
@@ -302,30 +339,44 @@ async fn metric_watcher(config: &Config) {
                                                         "creating incident: health metric indicates service degradation"
                                                     );
 
-                                                    // Create incident via V2 API
-                                                    match create_incident(
-                                                        &req_client,
-                                                        &sdb_config.url,
-                                                        &headers,
-                                                        &incident_data,
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(_) => {
-                                                            tracing::info!(
-                                                                component_id = id,
-                                                                impact = impact,
-                                                                "incident created successfully"
-                                                            );
+                                                    match build_auth_headers(oidc_identity).await {
+                                                        Ok(headers) => {
+                                                            match create_incident(
+                                                                &req_client,
+                                                                &sdb_config.url,
+                                                                &headers,
+                                                                &incident_data,
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(_) => {
+                                                                    tracing::info!(
+                                                                        component_id = id,
+                                                                        impact = impact,
+                                                                        "incident created successfully"
+                                                                    );
+                                                                }
+                                                                Err(e) => {
+                                                                    tracing::error!(
+                                                                        error = %e,
+                                                                        component_id = id,
+                                                                        service = component.0
+                                                                            .as_str(),
+                                                                        environment = env
+                                                                            .name
+                                                                            .as_str(),
+                                                                        "failed to create incident"
+                                                                    );
+                                                                }
+                                                            }
                                                         }
                                                         Err(e) => {
-                                                            // Error logging with details (FR-015)
                                                             tracing::error!(
                                                                 error = %e,
                                                                 component_id = id,
                                                                 service = component.0.as_str(),
                                                                 environment = env.name.as_str(),
-                                                                "failed to create incident"
+                                                                "failed to obtain authorization headers, skipping incident creation"
                                                             );
                                                         }
                                                     }
