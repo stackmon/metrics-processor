@@ -276,18 +276,14 @@ pub async fn handler_render(
             if target_parts.len() == 4 {
                 let environment = target_parts[1];
                 let metric_name = format!("{}.{}", target_parts[2], target_parts[3]);
-                if metric_name.ends_with("*") {
-                    let target = &metric_name[0..metric_name.len() - 1];
-                    for (metric, metric_map) in state.flag_metrics.iter() {
-                        if metric.starts_with(target) {
-                            if let Some(m) = metric_map.get(environment) {
-                                graphite_targets.insert(metric.clone(), m.query.clone());
-                            }
-                        }
-                    }
-                } else if let Some(metric) = state.flag_metrics.get(&metric_name) {
-                    if let Some(m) = metric.get(environment) {
-                        graphite_targets.insert(metric_name.clone(), m.query.clone());
+                let known: Vec<String> = state.flag_metrics.keys().cloned().sorted().collect();
+                for metric in expand_pattern(&metric_name, &known) {
+                    if let Some(m) = state
+                        .flag_metrics
+                        .get(&metric)
+                        .and_then(|per_env| per_env.get(environment))
+                    {
+                        graphite_targets.insert(metric, m.query.clone());
                     }
                 }
                 tracing::debug!("Requesting Graphite {:?}", graphite_targets);
@@ -350,23 +346,23 @@ pub async fn handler_render(
             if target_parts.len() == 3 {
                 let from = from.unwrap();
                 let to = to.unwrap();
-                if let Ok(service_health_data) = get_service_health(
-                    &state,
-                    target_parts[2],
-                    target_parts[1],
-                    from.as_str(),
-                    to.as_str(),
-                    max_data_points,
-                )
-                .await
-                {
-                    return (
-                        StatusCode::OK,
-                        Json(
-                            json!([{"target": target_parts[2], "datapoints": service_health_data.iter().map(|x| (Some(x.weight as f32), x.timestamp)).collect::<Vec<(Option<f32>, u32)>>()}]),
-                        ),
-                    );
+                let known: Vec<String> = state.health_metrics.keys().cloned().sorted().collect();
+                let mut series: Vec<serde_json::Value> = Vec::new();
+                for service in expand_pattern(target_parts[2], &known) {
+                    if let Ok(service_health_data) = get_service_health(
+                        &state,
+                        &service,
+                        target_parts[1],
+                        from.as_str(),
+                        to.as_str(),
+                        max_data_points,
+                    )
+                    .await
+                    {
+                        series.push(json!({"target": service, "datapoints": service_health_data.iter().map(|x| (Some(x.weight as f32), x.timestamp)).collect::<Vec<(Option<f32>, u32)>>()}));
+                    }
                 }
+                return (StatusCode::OK, Json(json!(series)));
             }
         }
         _ => {}
@@ -380,6 +376,43 @@ pub async fn handler_render(
 
 fn alias_graphite_query(query: &str, alias: &str) -> String {
     format!("alias({},'{}')", query, alias)
+}
+
+/// Expand a Graphite path segment against the names the facade knows.
+///
+/// Grafana sends `{a,b,c}` for a multi-value variable and `*` for "All"; a
+/// pattern without any glob character is returned unchanged so exact names
+/// keep their behaviour. Matches keep the order of `candidates`.
+fn expand_pattern(pattern: &str, candidates: &[String]) -> Vec<String> {
+    if !pattern.contains(['*', '?', '[', '{']) {
+        return vec![pattern.to_string()];
+    }
+    let globs: Vec<glob::Pattern> = expand_braces(pattern)
+        .iter()
+        .filter_map(|alternative| glob::Pattern::new(alternative).ok())
+        .collect();
+    let mut matched: Vec<String> = Vec::new();
+    for candidate in candidates {
+        if globs.iter().any(|g| g.matches(candidate)) && !matched.contains(candidate) {
+            matched.push(candidate.clone());
+        }
+    }
+    matched
+}
+
+/// `a.{b,c}.d` becomes `a.b.d` and `a.c.d`; every brace group is expanded.
+fn expand_braces(pattern: &str) -> Vec<String> {
+    let (open, close) = match (pattern.find('{'), pattern.find('}')) {
+        (Some(open), Some(close)) if open < close => (open, close),
+        _ => return vec![pattern.to_string()],
+    };
+    let head = &pattern[..open];
+    let group = &pattern[open + 1..close];
+    let tail = &pattern[close + 1..];
+    group
+        .split(',')
+        .flat_map(|alternative| expand_braces(&format!("{head}{alternative}{tail}")))
+        .collect()
 }
 
 /// Fetch required data from Graphite
@@ -468,6 +501,192 @@ mod test {
     #[test]
     fn test_alias_graphite_query() {
         assert_eq!(graphite::alias_graphite_query("q", "n"), "alias(q,'n')");
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn test_expand_pattern_exact_name_is_returned_unchanged() {
+        let known = names(&["ecs", "evs"]);
+        assert_eq!(graphite::expand_pattern("ecs", &known), names(&["ecs"]));
+        // unknown exact names are kept so the caller decides what to do
+        assert_eq!(graphite::expand_pattern("nope", &known), names(&["nope"]));
+    }
+
+    #[test]
+    fn test_expand_pattern_globs_and_braces() {
+        let known = names(&["ecs", "evs", "vpc", "elb", "e.extra"]);
+        assert_eq!(graphite::expand_pattern("*", &known), known);
+        assert_eq!(
+            graphite::expand_pattern("e?s", &known),
+            names(&["ecs", "evs"])
+        );
+        assert_eq!(
+            graphite::expand_pattern("[ev]*", &known),
+            names(&["ecs", "evs", "vpc", "elb", "e.extra"])
+        );
+        // Grafana multi-value format; unknown members are dropped, order follows the known list
+        assert_eq!(
+            graphite::expand_pattern("{vpc,ecs,nope}", &known),
+            names(&["ecs", "vpc"])
+        );
+        // brace members may themselves be globs
+        assert_eq!(
+            graphite::expand_pattern("{ev*,vpc}", &known),
+            names(&["evs", "vpc"])
+        );
+        // nothing matches -> nothing rendered, no error
+        assert!(graphite::expand_pattern("x*", &known).is_empty());
+        // an unterminated bracket is not a valid glob and matches nothing
+        assert!(graphite::expand_pattern("[ecs", &known).is_empty());
+    }
+
+    #[test]
+    fn test_expand_braces() {
+        assert_eq!(graphite::expand_braces("a.b"), names(&["a.b"]));
+        assert_eq!(
+            graphite::expand_braces("a.{b,c}.d"),
+            names(&["a.b.d", "a.c.d"])
+        );
+        assert_eq!(
+            graphite::expand_braces("{a,b}.{c,d}"),
+            names(&["a.c", "a.d", "b.c", "b.d"])
+        );
+        // a stray closing brace is left alone
+        assert_eq!(graphite::expand_braces("a}b{c"), names(&["a}b{c"]));
+    }
+
+    fn two_service_config(server_url: &str) -> String {
+        format!(
+            "
+        datasource:
+          url: '{}'
+        server:
+          port: 3000
+        metric_templates:
+          cpu_tmpl:
+            query: 'system.$environment.$service.cpu'
+            op: gt
+            threshold: 80
+        environments:
+          - name: prod
+        flag_metrics:
+          - name: cpu-usage
+            service: webapp
+            template:
+              name: cpu_tmpl
+            environments:
+              - name: prod
+          - name: cpu-usage
+            service: db
+            template:
+              name: cpu_tmpl
+            environments:
+              - name: prod
+        health_metrics:
+          webapp:
+            service: webapp
+            category: compute
+            metrics:
+              - webapp.cpu-usage
+            expressions:
+              - expression: 'webapp.cpu_usage'
+                weight: 2
+          db:
+            service: db
+            category: database
+            metrics:
+              - db.cpu-usage
+            expressions:
+              - expression: 'db.cpu_usage'
+                weight: 1
+        ",
+            server_url
+        )
+    }
+
+    fn mock_two_series(server: &mut mockito::ServerGuard) -> mockito::Mock {
+        server
+            .mock("GET", "/render")
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {"target": "webapp.cpu-usage", "datapoints": [[85.0, 1609459200]]},
+                    {"target": "db.cpu-usage", "datapoints": [[10.0, 1609459200]]}
+                ])
+                .to_string(),
+            )
+            .create()
+    }
+
+    async fn render_targets(app: &mut axum::Router, target: &str) -> Vec<String> {
+        let request = Request::builder()
+            .uri(format!(
+                "/render?target={}&from=2021-01-01T00:00:00Z&until=2021-01-01T01:00:00Z&maxDataPoints=10",
+                target
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        body.as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["target"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// Grafana's "All" and multi-value selections reach /render as `*` and `{a,b}`
+    #[tokio::test]
+    async fn test_render_health_glob_and_braces() {
+        let mut server = mockito::Server::new();
+        let _mock = mock_two_series(&mut server);
+        let config = config::Config::from_config_str(&two_service_config(&server.url()));
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        assert_eq!(
+            render_targets(&mut app, "health.prod.*").await,
+            names(&["db", "webapp"])
+        );
+        assert_eq!(
+            render_targets(&mut app, "health.prod.{webapp,db,unknown}").await,
+            names(&["db", "webapp"])
+        );
+        assert_eq!(
+            render_targets(&mut app, "health.prod.web*").await,
+            names(&["webapp"])
+        );
+        assert!(render_targets(&mut app, "health.prod.nope")
+            .await
+            .is_empty());
+        assert!(render_targets(&mut app, "health.prod.{x,y}")
+            .await
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_render_flag_glob_in_service_position() {
+        let mut server = mockito::Server::new();
+        let _mock = mock_two_series(&mut server);
+        let config = config::Config::from_config_str(&two_service_config(&server.url()));
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        let mut all = render_targets(&mut app, "flag.prod.*.cpu-usage").await;
+        all.sort();
+        assert_eq!(all, names(&["db.cpu-usage", "webapp.cpu-usage"]));
+        let mut braces = render_targets(&mut app, "flag.prod.{db,webapp}.cpu-usage").await;
+        braces.sort();
+        assert_eq!(braces, names(&["db.cpu-usage", "webapp.cpu-usage"]));
     }
 
     macro_rules! aw {
