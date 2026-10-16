@@ -22,6 +22,7 @@ use std::collections::HashMap;
 
 use crate::common::{get_metric_flag_state, get_service_health};
 use crate::types::{AppState, CloudMonError};
+use futures::stream::{self, StreamExt};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct GraphiteData {
@@ -276,18 +277,14 @@ pub async fn handler_render(
             if target_parts.len() == 4 {
                 let environment = target_parts[1];
                 let metric_name = format!("{}.{}", target_parts[2], target_parts[3]);
-                if metric_name.ends_with("*") {
-                    let target = &metric_name[0..metric_name.len() - 1];
-                    for (metric, metric_map) in state.flag_metrics.iter() {
-                        if metric.starts_with(target) {
-                            if let Some(m) = metric_map.get(environment) {
-                                graphite_targets.insert(metric.clone(), m.query.clone());
-                            }
-                        }
-                    }
-                } else if let Some(metric) = state.flag_metrics.get(&metric_name) {
-                    if let Some(m) = metric.get(environment) {
-                        graphite_targets.insert(metric_name.clone(), m.query.clone());
+                let known: Vec<String> = state.flag_metrics.keys().cloned().sorted().collect();
+                for metric in expand_pattern(&metric_name, &known) {
+                    if let Some(m) = state
+                        .flag_metrics
+                        .get(&metric)
+                        .and_then(|per_env| per_env.get(environment))
+                    {
+                        graphite_targets.insert(metric, m.query.clone());
                     }
                 }
                 tracing::debug!("Requesting Graphite {:?}", graphite_targets);
@@ -350,23 +347,33 @@ pub async fn handler_render(
             if target_parts.len() == 3 {
                 let from = from.unwrap();
                 let to = to.unwrap();
-                if let Ok(service_health_data) = get_service_health(
-                    &state,
-                    target_parts[2],
-                    target_parts[1],
-                    from.as_str(),
-                    to.as_str(),
-                    max_data_points,
-                )
-                .await
-                {
-                    return (
-                        StatusCode::OK,
-                        Json(
-                            json!([{"target": target_parts[2], "datapoints": service_health_data.iter().map(|x| (Some(x.weight as f32), x.timestamp)).collect::<Vec<(Option<f32>, u32)>>()}]),
-                        ),
-                    );
-                }
+                let known: Vec<String> = state.health_metrics.keys().cloned().sorted().collect();
+                let environment = target_parts[1];
+                let series: Vec<serde_json::Value> = stream::iter(expand_pattern(target_parts[2], &known))
+                    .map(|service| {
+                        let (state, from, to) = (&state, &from, &to);
+                        async move {
+                            let health = get_service_health(
+                                state,
+                                &service,
+                                environment,
+                                from.as_str(),
+                                to.as_str(),
+                                max_data_points,
+                            )
+                            .await;
+                            (service, health)
+                        }
+                    })
+                    .buffered(HEALTH_FETCH_CONCURRENCY)
+                    .filter_map(|(service, health)| async move {
+                        health.ok().map(|service_health_data| {
+                            json!({"target": service, "datapoints": service_health_data.iter().map(|x| (Some(x.weight as f32), x.timestamp)).collect::<Vec<(Option<f32>, u32)>>()})
+                        })
+                    })
+                    .collect()
+                    .await;
+                return (StatusCode::OK, Json(json!(series)));
             }
         }
         _ => {}
@@ -380,6 +387,108 @@ pub async fn handler_render(
 
 fn alias_graphite_query(query: &str, alias: &str) -> String {
     format!("alias({},'{}')", query, alias)
+}
+
+/// Backend calls in flight for one globbed `health.<env>.*` target.
+const HEALTH_FETCH_CONCURRENCY: usize = 8;
+/// Brace groups accepted in one target; beyond this the pattern matches nothing.
+const MAX_BRACE_GROUPS: usize = 8;
+/// Alternatives a target may expand to; beyond this the pattern matches nothing.
+const MAX_PATTERN_EXPANSIONS: usize = 256;
+
+/// Expand a Graphite path against the names the facade knows.
+///
+/// Grafana sends `{a,b,c}` for a multi-value variable and `*` for "All"; a
+/// pattern without any glob character is returned unchanged so exact names
+/// keep their behaviour. Matching follows Graphite: the pattern and the
+/// candidate are compared node by node, so `*` and `?` never cross a `.`,
+/// braces may nest (`{a,{b,c}}`), and a brace member cannot contain a `.`
+/// because the caller already split the target on dots. Matches keep the order
+/// of `candidates`. Patterns with more than `MAX_BRACE_GROUPS` groups or more
+/// than `MAX_PATTERN_EXPANSIONS` alternatives match nothing.
+fn expand_pattern(pattern: &str, candidates: &[String]) -> Vec<String> {
+    if !pattern.contains(['*', '?', '[', '{']) {
+        return vec![pattern.to_string()];
+    }
+    if pattern.matches('{').count() > MAX_BRACE_GROUPS {
+        return Vec::new();
+    }
+    let Some(alternatives) = expand_braces_within(pattern, MAX_PATTERN_EXPANSIONS) else {
+        return Vec::new();
+    };
+    let globs: Vec<Vec<glob::Pattern>> = alternatives
+        .iter()
+        .filter_map(|alternative| {
+            alternative
+                .split('.')
+                .map(glob::Pattern::new)
+                .collect::<Result<Vec<_>, _>>()
+                .ok()
+        })
+        .collect();
+    let mut matched: Vec<String> = Vec::new();
+    for candidate in candidates {
+        let nodes: Vec<&str> = candidate.split('.').collect();
+        let hit = globs.iter().any(|node_globs| {
+            node_globs.len() == nodes.len()
+                && node_globs
+                    .iter()
+                    .zip(&nodes)
+                    .all(|(g, node)| g.matches(node))
+        });
+        if hit && !matched.contains(candidate) {
+            matched.push(candidate.clone());
+        }
+    }
+    matched
+}
+
+/// `a.{b,c}.d` becomes `a.b.d` and `a.c.d`; groups may repeat and nest.
+#[cfg(test)]
+fn expand_braces(pattern: &str) -> Vec<String> {
+    expand_braces_within(pattern, MAX_PATTERN_EXPANSIONS).unwrap_or_default()
+}
+
+/// `expand_braces` with a budget: `None` as soon as more than `limit`
+/// alternatives would exist, so the cartesian product is never built past the
+/// limit however many members the groups have.
+fn expand_braces_within(pattern: &str, limit: usize) -> Option<Vec<String>> {
+    let Some(open) = pattern.find('{') else {
+        return Some(vec![pattern.to_string()]);
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    let mut cuts = vec![open];
+    for (i, c) in pattern.char_indices().skip(open) {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            ',' if depth == 1 => cuts.push(i),
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return Some(vec![pattern.to_string()]);
+    };
+    cuts.push(close);
+    let head = &pattern[..open];
+    let tail = &pattern[close + 1..];
+    let mut expanded = Vec::new();
+    for w in cuts.windows(2) {
+        let member = &pattern[w[0] + 1..w[1]];
+        let rest = expand_braces_within(&format!("{head}{member}{tail}"), limit - expanded.len())?;
+        expanded.extend(rest);
+        if expanded.len() > limit {
+            return None;
+        }
+    }
+    Some(expanded)
 }
 
 /// Fetch required data from Graphite
@@ -468,6 +577,249 @@ mod test {
     #[test]
     fn test_alias_graphite_query() {
         assert_eq!(graphite::alias_graphite_query("q", "n"), "alias(q,'n')");
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn test_expand_pattern_exact_name_is_returned_unchanged() {
+        let known = names(&["ecs", "evs"]);
+        assert_eq!(graphite::expand_pattern("ecs", &known), names(&["ecs"]));
+        // unknown exact names are kept so the caller decides what to do
+        assert_eq!(graphite::expand_pattern("nope", &known), names(&["nope"]));
+    }
+
+    #[test]
+    fn test_expand_pattern_globs_and_braces() {
+        let known = names(&["ecs", "evs", "vpc", "elb", "e.extra"]);
+        // `*` matches one node, so the two-node name stays out (Graphite semantics)
+        assert_eq!(
+            graphite::expand_pattern("*", &known),
+            names(&["ecs", "evs", "vpc", "elb"])
+        );
+        assert_eq!(
+            graphite::expand_pattern("e?s", &known),
+            names(&["ecs", "evs"])
+        );
+        assert_eq!(
+            graphite::expand_pattern("[ev]*", &known),
+            names(&["ecs", "evs", "vpc", "elb"])
+        );
+        // Grafana multi-value format; unknown members are dropped, order follows the known list
+        assert_eq!(
+            graphite::expand_pattern("{vpc,ecs,nope}", &known),
+            names(&["ecs", "vpc"])
+        );
+        // brace members may themselves be globs
+        assert_eq!(
+            graphite::expand_pattern("{ev*,vpc}", &known),
+            names(&["evs", "vpc"])
+        );
+        // nothing matches -> nothing rendered, no error
+        assert!(graphite::expand_pattern("x*", &known).is_empty());
+        // an unterminated bracket is not a valid glob and matches nothing
+        assert!(graphite::expand_pattern("[ecs", &known).is_empty());
+    }
+
+    #[test]
+    fn test_expand_braces() {
+        assert_eq!(graphite::expand_braces("a.b"), names(&["a.b"]));
+        assert_eq!(
+            graphite::expand_braces("a.{b,c}.d"),
+            names(&["a.b.d", "a.c.d"])
+        );
+        assert_eq!(
+            graphite::expand_braces("{a,b}.{c,d}"),
+            names(&["a.c", "a.d", "b.c", "b.d"])
+        );
+        // a stray closing brace is left alone
+        assert_eq!(graphite::expand_braces("a}b{c"), names(&["a}b{c"]));
+        // nested groups
+        assert_eq!(
+            graphite::expand_braces("{a,{b,c}}.d"),
+            names(&["a.d", "b.d", "c.d"])
+        );
+        assert_eq!(graphite::expand_braces("{a,b"), names(&["{a,b"]));
+    }
+
+    #[test]
+    fn test_expand_pattern_follows_graphite_node_semantics() {
+        let known = names(&["ecs", "e.extra", "e.other", "evs.x.y"]);
+        // `*` never crosses a dot
+        assert_eq!(graphite::expand_pattern("*", &known), names(&["ecs"]));
+        assert_eq!(
+            graphite::expand_pattern("*.*", &known),
+            names(&["e.extra", "e.other"])
+        );
+        assert_eq!(
+            graphite::expand_pattern("e.*", &known),
+            names(&["e.extra", "e.other"])
+        );
+        assert_eq!(graphite::expand_pattern("e?s", &known), names(&["ecs"]));
+    }
+
+    #[test]
+    fn test_expand_pattern_caps_brace_expansion() {
+        let known = names(&["aa", "ab", "abababab"]);
+        // 9 groups: rejected before expanding
+        let many_groups = "{a,b}".repeat(9);
+        assert!(graphite::expand_pattern(&many_groups, &known).is_empty());
+        // 8 groups but 2^8 = 256 alternatives: still accepted
+        let at_limit = "{a,b}".repeat(8);
+        assert_eq!(
+            graphite::expand_pattern(&at_limit, &known),
+            names(&["abababab"])
+        );
+        // 5 groups of 4 = 1024 alternatives: rejected
+        let too_many = "{a,b,c,d}".repeat(5);
+        assert!(graphite::expand_pattern(&too_many, &known).is_empty());
+        // 8 groups of 30 members = 30^8 alternatives: must be refused without
+        // building the product (the bound is checked while expanding)
+        let members = (0..30)
+            .map(|i| format!("m{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let wide = format!("{{{members}}}").repeat(8);
+        let started = std::time::Instant::now();
+        assert!(graphite::expand_pattern(&wide, &known).is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(
+            graphite::expand_pattern("a{a,b}", &known),
+            names(&["aa", "ab"])
+        );
+    }
+
+    fn two_service_config(server_url: &str) -> String {
+        format!(
+            "
+        datasource:
+          url: '{}'
+        server:
+          port: 3000
+        metric_templates:
+          cpu_tmpl:
+            query: 'system.$environment.$service.cpu'
+            op: gt
+            threshold: 80
+        environments:
+          - name: prod
+        flag_metrics:
+          - name: cpu-usage
+            service: webapp
+            template:
+              name: cpu_tmpl
+            environments:
+              - name: prod
+          - name: cpu-usage
+            service: db
+            template:
+              name: cpu_tmpl
+            environments:
+              - name: prod
+        health_metrics:
+          webapp:
+            service: webapp
+            category: compute
+            metrics:
+              - webapp.cpu-usage
+            expressions:
+              - expression: 'webapp.cpu_usage'
+                weight: 2
+          db:
+            service: db
+            category: database
+            metrics:
+              - db.cpu-usage
+            expressions:
+              - expression: 'db.cpu_usage'
+                weight: 1
+        ",
+            server_url
+        )
+    }
+
+    fn mock_two_series(server: &mut mockito::ServerGuard) -> mockito::Mock {
+        server
+            .mock("GET", "/render")
+            .match_query(Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {"target": "webapp.cpu-usage", "datapoints": [[85.0, 1609459200]]},
+                    {"target": "db.cpu-usage", "datapoints": [[10.0, 1609459200]]}
+                ])
+                .to_string(),
+            )
+            .create()
+    }
+
+    async fn render_targets(app: &mut axum::Router, target: &str) -> Vec<String> {
+        let request = Request::builder()
+            .uri(format!(
+                "/render?target={}&from=2021-01-01T00:00:00Z&until=2021-01-01T01:00:00Z&maxDataPoints=10",
+                target
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let response = app.ready().await.unwrap().call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        body.as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["target"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// Grafana's "All" and multi-value selections reach /render as `*` and `{a,b}`
+    #[tokio::test]
+    async fn test_render_health_glob_and_braces() {
+        let mut server = mockito::Server::new();
+        let _mock = mock_two_series(&mut server);
+        let config = config::Config::from_config_str(&two_service_config(&server.url()));
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        assert_eq!(
+            render_targets(&mut app, "health.prod.*").await,
+            names(&["db", "webapp"])
+        );
+        assert_eq!(
+            render_targets(&mut app, "health.prod.{webapp,db,unknown}").await,
+            names(&["db", "webapp"])
+        );
+        assert_eq!(
+            render_targets(&mut app, "health.prod.web*").await,
+            names(&["webapp"])
+        );
+        assert!(render_targets(&mut app, "health.prod.nope")
+            .await
+            .is_empty());
+        assert!(render_targets(&mut app, "health.prod.{x,y}")
+            .await
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_render_flag_glob_in_service_position() {
+        let mut server = mockito::Server::new();
+        let _mock = mock_two_series(&mut server);
+        let config = config::Config::from_config_str(&two_service_config(&server.url()));
+        let mut state = types::AppState::new(config);
+        state.process_config();
+        let mut app = graphite::get_graphite_routes().with_state(state);
+
+        let mut all = render_targets(&mut app, "flag.prod.*.cpu-usage").await;
+        all.sort();
+        assert_eq!(all, names(&["db.cpu-usage", "webapp.cpu-usage"]));
+        let mut braces = render_targets(&mut app, "flag.prod.{db,webapp}.cpu-usage").await;
+        braces.sort();
+        assert_eq!(braces, names(&["db.cpu-usage", "webapp.cpu-usage"]));
     }
 
     macro_rules! aw {
