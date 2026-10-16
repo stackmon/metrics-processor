@@ -413,10 +413,9 @@ fn expand_pattern(pattern: &str, candidates: &[String]) -> Vec<String> {
     if pattern.matches('{').count() > MAX_BRACE_GROUPS {
         return Vec::new();
     }
-    let alternatives = expand_braces(pattern);
-    if alternatives.len() > MAX_PATTERN_EXPANSIONS {
+    let Some(alternatives) = expand_braces_within(pattern, MAX_PATTERN_EXPANSIONS) else {
         return Vec::new();
-    }
+    };
     let globs: Vec<Vec<glob::Pattern>> = alternatives
         .iter()
         .filter_map(|alternative| {
@@ -445,9 +444,17 @@ fn expand_pattern(pattern: &str, candidates: &[String]) -> Vec<String> {
 }
 
 /// `a.{b,c}.d` becomes `a.b.d` and `a.c.d`; groups may repeat and nest.
+#[cfg(test)]
 fn expand_braces(pattern: &str) -> Vec<String> {
+    expand_braces_within(pattern, MAX_PATTERN_EXPANSIONS).unwrap_or_default()
+}
+
+/// `expand_braces` with a budget: `None` as soon as more than `limit`
+/// alternatives would exist, so the cartesian product is never built past the
+/// limit however many members the groups have.
+fn expand_braces_within(pattern: &str, limit: usize) -> Option<Vec<String>> {
     let Some(open) = pattern.find('{') else {
-        return vec![pattern.to_string()];
+        return Some(vec![pattern.to_string()]);
     };
     let mut depth = 0usize;
     let mut close = None;
@@ -467,14 +474,21 @@ fn expand_braces(pattern: &str) -> Vec<String> {
         }
     }
     let Some(close) = close else {
-        return vec![pattern.to_string()];
+        return Some(vec![pattern.to_string()]);
     };
     cuts.push(close);
     let head = &pattern[..open];
     let tail = &pattern[close + 1..];
-    cuts.windows(2)
-        .flat_map(|w| expand_braces(&format!("{head}{}{tail}", &pattern[w[0] + 1..w[1]])))
-        .collect()
+    let mut expanded = Vec::new();
+    for w in cuts.windows(2) {
+        let member = &pattern[w[0] + 1..w[1]];
+        let rest = expand_braces_within(&format!("{head}{member}{tail}"), limit - expanded.len())?;
+        expanded.extend(rest);
+        if expanded.len() > limit {
+            return None;
+        }
+    }
+    Some(expanded)
 }
 
 /// Fetch required data from Graphite
@@ -648,16 +662,29 @@ mod test {
 
     #[test]
     fn test_expand_pattern_caps_brace_expansion() {
-        let known = names(&["aa", "ab"]);
+        let known = names(&["aa", "ab", "abababab"]);
         // 9 groups: rejected before expanding
         let many_groups = "{a,b}".repeat(9);
         assert!(graphite::expand_pattern(&many_groups, &known).is_empty());
         // 8 groups but 2^8 = 256 alternatives: still accepted
         let at_limit = "{a,b}".repeat(8);
-        assert!(graphite::expand_pattern(&at_limit, &known).is_empty());
+        assert_eq!(
+            graphite::expand_pattern(&at_limit, &known),
+            names(&["abababab"])
+        );
         // 5 groups of 4 = 1024 alternatives: rejected
         let too_many = "{a,b,c,d}".repeat(5);
         assert!(graphite::expand_pattern(&too_many, &known).is_empty());
+        // 8 groups of 30 members = 30^8 alternatives: must be refused without
+        // building the product (the bound is checked while expanding)
+        let members = (0..30)
+            .map(|i| format!("m{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let wide = format!("{{{members}}}").repeat(8);
+        let started = std::time::Instant::now();
+        assert!(graphite::expand_pattern(&wide, &known).is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
         assert_eq!(
             graphite::expand_pattern("a{a,b}", &known),
             names(&["aa", "ab"])
