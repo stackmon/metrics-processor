@@ -22,6 +22,7 @@ use std::collections::HashMap;
 
 use crate::common::{get_metric_flag_state, get_service_health};
 use crate::types::{AppState, CloudMonError};
+use futures::stream::{self, StreamExt};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct GraphiteData {
@@ -347,21 +348,31 @@ pub async fn handler_render(
                 let from = from.unwrap();
                 let to = to.unwrap();
                 let known: Vec<String> = state.health_metrics.keys().cloned().sorted().collect();
-                let mut series: Vec<serde_json::Value> = Vec::new();
-                for service in expand_pattern(target_parts[2], &known) {
-                    if let Ok(service_health_data) = get_service_health(
-                        &state,
-                        &service,
-                        target_parts[1],
-                        from.as_str(),
-                        to.as_str(),
-                        max_data_points,
-                    )
-                    .await
-                    {
-                        series.push(json!({"target": service, "datapoints": service_health_data.iter().map(|x| (Some(x.weight as f32), x.timestamp)).collect::<Vec<(Option<f32>, u32)>>()}));
-                    }
-                }
+                let environment = target_parts[1];
+                let series: Vec<serde_json::Value> = stream::iter(expand_pattern(target_parts[2], &known))
+                    .map(|service| {
+                        let (state, from, to) = (&state, &from, &to);
+                        async move {
+                            let health = get_service_health(
+                                state,
+                                &service,
+                                environment,
+                                from.as_str(),
+                                to.as_str(),
+                                max_data_points,
+                            )
+                            .await;
+                            (service, health)
+                        }
+                    })
+                    .buffered(HEALTH_FETCH_CONCURRENCY)
+                    .filter_map(|(service, health)| async move {
+                        health.ok().map(|service_health_data| {
+                            json!({"target": service, "datapoints": service_health_data.iter().map(|x| (Some(x.weight as f32), x.timestamp)).collect::<Vec<(Option<f32>, u32)>>()})
+                        })
+                    })
+                    .collect()
+                    .await;
                 return (StatusCode::OK, Json(json!(series)));
             }
         }
@@ -378,40 +389,91 @@ fn alias_graphite_query(query: &str, alias: &str) -> String {
     format!("alias({},'{}')", query, alias)
 }
 
-/// Expand a Graphite path segment against the names the facade knows.
+/// Backend calls in flight for one globbed `health.<env>.*` target.
+const HEALTH_FETCH_CONCURRENCY: usize = 8;
+/// Brace groups accepted in one target; beyond this the pattern matches nothing.
+const MAX_BRACE_GROUPS: usize = 8;
+/// Alternatives a target may expand to; beyond this the pattern matches nothing.
+const MAX_PATTERN_EXPANSIONS: usize = 256;
+
+/// Expand a Graphite path against the names the facade knows.
 ///
 /// Grafana sends `{a,b,c}` for a multi-value variable and `*` for "All"; a
 /// pattern without any glob character is returned unchanged so exact names
-/// keep their behaviour. Matches keep the order of `candidates`.
+/// keep their behaviour. Matching follows Graphite: the pattern and the
+/// candidate are compared node by node, so `*` and `?` never cross a `.`,
+/// braces may nest (`{a,{b,c}}`), and a brace member cannot contain a `.`
+/// because the caller already split the target on dots. Matches keep the order
+/// of `candidates`. Patterns with more than `MAX_BRACE_GROUPS` groups or more
+/// than `MAX_PATTERN_EXPANSIONS` alternatives match nothing.
 fn expand_pattern(pattern: &str, candidates: &[String]) -> Vec<String> {
     if !pattern.contains(['*', '?', '[', '{']) {
         return vec![pattern.to_string()];
     }
-    let globs: Vec<glob::Pattern> = expand_braces(pattern)
+    if pattern.matches('{').count() > MAX_BRACE_GROUPS {
+        return Vec::new();
+    }
+    let alternatives = expand_braces(pattern);
+    if alternatives.len() > MAX_PATTERN_EXPANSIONS {
+        return Vec::new();
+    }
+    let globs: Vec<Vec<glob::Pattern>> = alternatives
         .iter()
-        .filter_map(|alternative| glob::Pattern::new(alternative).ok())
+        .filter_map(|alternative| {
+            alternative
+                .split('.')
+                .map(glob::Pattern::new)
+                .collect::<Result<Vec<_>, _>>()
+                .ok()
+        })
         .collect();
     let mut matched: Vec<String> = Vec::new();
     for candidate in candidates {
-        if globs.iter().any(|g| g.matches(candidate)) && !matched.contains(candidate) {
+        let nodes: Vec<&str> = candidate.split('.').collect();
+        let hit = globs.iter().any(|node_globs| {
+            node_globs.len() == nodes.len()
+                && node_globs
+                    .iter()
+                    .zip(&nodes)
+                    .all(|(g, node)| g.matches(node))
+        });
+        if hit && !matched.contains(candidate) {
             matched.push(candidate.clone());
         }
     }
     matched
 }
 
-/// `a.{b,c}.d` becomes `a.b.d` and `a.c.d`; every brace group is expanded.
+/// `a.{b,c}.d` becomes `a.b.d` and `a.c.d`; groups may repeat and nest.
 fn expand_braces(pattern: &str) -> Vec<String> {
-    let (open, close) = match (pattern.find('{'), pattern.find('}')) {
-        (Some(open), Some(close)) if open < close => (open, close),
-        _ => return vec![pattern.to_string()],
+    let Some(open) = pattern.find('{') else {
+        return vec![pattern.to_string()];
     };
+    let mut depth = 0usize;
+    let mut close = None;
+    let mut cuts = vec![open];
+    for (i, c) in pattern.char_indices().skip(open) {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            ',' if depth == 1 => cuts.push(i),
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return vec![pattern.to_string()];
+    };
+    cuts.push(close);
     let head = &pattern[..open];
-    let group = &pattern[open + 1..close];
     let tail = &pattern[close + 1..];
-    group
-        .split(',')
-        .flat_map(|alternative| expand_braces(&format!("{head}{alternative}{tail}")))
+    cuts.windows(2)
+        .flat_map(|w| expand_braces(&format!("{head}{}{tail}", &pattern[w[0] + 1..w[1]])))
         .collect()
 }
 
@@ -518,14 +580,18 @@ mod test {
     #[test]
     fn test_expand_pattern_globs_and_braces() {
         let known = names(&["ecs", "evs", "vpc", "elb", "e.extra"]);
-        assert_eq!(graphite::expand_pattern("*", &known), known);
+        // `*` matches one node, so the two-node name stays out (Graphite semantics)
+        assert_eq!(
+            graphite::expand_pattern("*", &known),
+            names(&["ecs", "evs", "vpc", "elb"])
+        );
         assert_eq!(
             graphite::expand_pattern("e?s", &known),
             names(&["ecs", "evs"])
         );
         assert_eq!(
             graphite::expand_pattern("[ev]*", &known),
-            names(&["ecs", "evs", "vpc", "elb", "e.extra"])
+            names(&["ecs", "evs", "vpc", "elb"])
         );
         // Grafana multi-value format; unknown members are dropped, order follows the known list
         assert_eq!(
@@ -556,6 +622,46 @@ mod test {
         );
         // a stray closing brace is left alone
         assert_eq!(graphite::expand_braces("a}b{c"), names(&["a}b{c"]));
+        // nested groups
+        assert_eq!(
+            graphite::expand_braces("{a,{b,c}}.d"),
+            names(&["a.d", "b.d", "c.d"])
+        );
+        assert_eq!(graphite::expand_braces("{a,b"), names(&["{a,b"]));
+    }
+
+    #[test]
+    fn test_expand_pattern_follows_graphite_node_semantics() {
+        let known = names(&["ecs", "e.extra", "e.other", "evs.x.y"]);
+        // `*` never crosses a dot
+        assert_eq!(graphite::expand_pattern("*", &known), names(&["ecs"]));
+        assert_eq!(
+            graphite::expand_pattern("*.*", &known),
+            names(&["e.extra", "e.other"])
+        );
+        assert_eq!(
+            graphite::expand_pattern("e.*", &known),
+            names(&["e.extra", "e.other"])
+        );
+        assert_eq!(graphite::expand_pattern("e?s", &known), names(&["ecs"]));
+    }
+
+    #[test]
+    fn test_expand_pattern_caps_brace_expansion() {
+        let known = names(&["aa", "ab"]);
+        // 9 groups: rejected before expanding
+        let many_groups = "{a,b}".repeat(9);
+        assert!(graphite::expand_pattern(&many_groups, &known).is_empty());
+        // 8 groups but 2^8 = 256 alternatives: still accepted
+        let at_limit = "{a,b}".repeat(8);
+        assert!(graphite::expand_pattern(&at_limit, &known).is_empty());
+        // 5 groups of 4 = 1024 alternatives: rejected
+        let too_many = "{a,b,c,d}".repeat(5);
+        assert!(graphite::expand_pattern(&too_many, &known).is_empty());
+        assert_eq!(
+            graphite::expand_pattern("a{a,b}", &known),
+            names(&["aa", "ab"])
+        );
     }
 
     fn two_service_config(server_url: &str) -> String {
