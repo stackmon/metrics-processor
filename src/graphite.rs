@@ -395,6 +395,11 @@ const HEALTH_FETCH_CONCURRENCY: usize = 8;
 const MAX_BRACE_GROUPS: usize = 8;
 /// Alternatives a target may expand to; beyond this the pattern matches nothing.
 const MAX_PATTERN_EXPANSIONS: usize = 256;
+/// Longest pattern accepted. Every alternative is a copy of the pattern and
+/// `glob::Pattern` keeps ~82 bytes per character, so without this cap a single
+/// request-head-sized target (hundreds of KB) could allocate gigabytes.
+/// Grafana multi-value targets are a few hundred bytes at most.
+const MAX_PATTERN_LEN: usize = 1024;
 
 /// Expand a Graphite path against the names the facade knows.
 ///
@@ -402,18 +407,32 @@ const MAX_PATTERN_EXPANSIONS: usize = 256;
 /// pattern without any glob character is returned unchanged so exact names
 /// keep their behaviour. Matching follows Graphite: the pattern and the
 /// candidate are compared node by node, so `*` and `?` never cross a `.`,
-/// braces may nest (`{a,{b,c}}`), and a brace member cannot contain a `.`
-/// because the caller already split the target on dots. Matches keep the order
-/// of `candidates`. Patterns with more than `MAX_BRACE_GROUPS` groups or more
-/// than `MAX_PATTERN_EXPANSIONS` alternatives match nothing.
+/// braces may nest (`{a,{b,c}}`), and neither a brace member nor a `[...]`
+/// class can contain a `.` because the caller already split the target on
+/// dots (`a[.-]b` matches nothing, as in Graphite). Matches keep the order of
+/// `candidates`. Patterns longer than `MAX_PATTERN_LEN`, with more than
+/// `MAX_BRACE_GROUPS` groups or more than `MAX_PATTERN_EXPANSIONS`
+/// alternatives match nothing; the refusal is logged with the pattern's size,
+/// not its content.
 fn expand_pattern(pattern: &str, candidates: &[String]) -> Vec<String> {
     if !pattern.contains(['*', '?', '[', '{']) {
         return vec![pattern.to_string()];
     }
-    if pattern.matches('{').count() > MAX_BRACE_GROUPS {
+    let groups = pattern.matches('{').count();
+    if pattern.len() > MAX_PATTERN_LEN || groups > MAX_BRACE_GROUPS {
+        tracing::warn!(
+            len = pattern.len(),
+            groups,
+            "render target pattern refused: too long or too many brace groups"
+        );
         return Vec::new();
     }
     let Some(alternatives) = expand_braces_within(pattern, MAX_PATTERN_EXPANSIONS) else {
+        tracing::warn!(
+            len = pattern.len(),
+            groups,
+            "render target pattern refused: more than {MAX_PATTERN_EXPANSIONS} alternatives"
+        );
         return Vec::new();
     };
     let globs: Vec<Vec<glob::Pattern>> = alternatives
@@ -684,7 +703,20 @@ mod test {
         let wide = format!("{{{members}}}").repeat(8);
         let started = std::time::Instant::now();
         assert!(graphite::expand_pattern(&wide, &known).is_empty());
-        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert!(started.elapsed() < std::time::Duration::from_millis(50));
+        // 8 groups plus a 100 KB literal: refused on length before any
+        // alternative is copied or compiled
+        let long = format!("{}{}", "{a,b}".repeat(8), "x".repeat(100_000));
+        let started = std::time::Instant::now();
+        assert!(graphite::expand_pattern(&long, &known).is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_millis(50));
+        // exactly at the length cap (1020 + `{`, `,y}` = 1024): still accepted
+        let at_len = "x".repeat(1020);
+        let known_long = names(&[at_len.as_str()]);
+        assert_eq!(
+            graphite::expand_pattern(&format!("{{{at_len},y}}"), &known_long),
+            known_long
+        );
         assert_eq!(
             graphite::expand_pattern("a{a,b}", &known),
             names(&["aa", "ab"])
