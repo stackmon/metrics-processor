@@ -10,7 +10,7 @@ use anyhow::Context;
 use cloudmon_metrics::config::OidcIdentity;
 use cloudmon_metrics::sd::{
     build_auth_headers, build_component_id_cache, build_incident_data, create_incident,
-    fetch_components, find_component_id, Component, ComponentAttribute,
+    fetch_components, find_component_id, merge_component_attributes, Component, ComponentAttribute,
 };
 use cloudmon_metrics::{api::v1::ServiceHealthResponse, config::Config};
 
@@ -115,7 +115,10 @@ async fn metric_watcher(
                         component.0.clone(),
                         Component {
                             name: name.clone(),
-                            attributes: env_attrs.clone(),
+                            attributes: merge_component_attributes(
+                                &env_attrs,
+                                component.1.component_attributes.as_ref(),
+                            ),
                         },
                     );
                 }

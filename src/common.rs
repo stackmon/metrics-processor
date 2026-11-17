@@ -591,6 +591,7 @@ mod tests {
                 service: service.to_string(),
                 component_name: None,
                 category: "test".to_string(),
+                component_attributes: None,
                 metrics: metric_names,
                 expressions: expression_defs,
             },
