@@ -148,3 +148,29 @@ Configures environment names and optional attributes (used once alerting the sta
 ## health_metrics
 
 Configures health metrics for components.
+
+Every entry names the Status Dashboard component the service is reported
+against: `component_name` plus the attributes of the environment
+(`environments[].attributes`, for example `region: EU-DE`). A service that is
+published as one global component can override single attributes for itself
+with `component_attributes`; an attribute with the same name replaces the
+environment value, a new name is added.
+
+```yaml
+health_metrics:
+  console:
+    service: console
+    component_name: "T Cloud Public Console"
+    category: global
+    component_attributes:
+      region: Global
+    metrics:
+      - console.api_down
+      - console.api_slow
+      - console.api_success_rate_low
+    expressions:
+      - expression: "console.api_slow || console.api_success_rate_low"
+        weight: 1
+      - expression: "console.api_down"
+        weight: 2
+```

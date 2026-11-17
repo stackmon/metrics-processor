@@ -100,6 +100,10 @@ pub struct ServiceHealthDef {
     pub service: String,
     pub component_name: Option<String>,
     pub category: String,
+    /// Overrides the environment attributes for components that are not bound
+    /// to a region, such as the global sites.
+    #[serde(default)]
+    pub component_attributes: Option<HashMap<String, String>>,
     pub metrics: Vec<String>,
     pub expressions: Vec<MetricExpressionDef>,
 }
@@ -240,6 +244,7 @@ impl AppState {
                 service: health_def.service.clone(),
                 component_name: health_def.component_name.clone(),
                 category: health_def.category.clone(),
+                component_attributes: health_def.component_attributes.clone(),
                 metrics: health_def.metrics.clone(),
                 expressions: Vec::new(),
             };

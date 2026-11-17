@@ -109,6 +109,31 @@ pub fn find_component_id(cache: &ComponentCache, target: &Component) -> Option<u
         .map(|((_name, _attrs), id)| *id)
 }
 
+pub fn merge_component_attributes(
+    environment_attributes: &[ComponentAttribute],
+    overrides: Option<&HashMap<String, String>>,
+) -> Vec<ComponentAttribute> {
+    let mut merged = environment_attributes.to_vec();
+    let overrides = match overrides {
+        Some(overrides) => overrides,
+        None => return merged,
+    };
+
+    for (name, value) in overrides {
+        let attribute = ComponentAttribute {
+            name: name.clone(),
+            value: value.clone(),
+        };
+        match merged.iter().position(|attr| attr.name == attribute.name) {
+            Some(index) => merged[index] = attribute,
+            None => merged.push(attribute),
+        }
+    }
+
+    merged.sort();
+    merged
+}
+
 /// Build incident data structure for V2 API
 /// timestamp: metric timestamp in seconds since epoch
 pub fn build_incident_data(component_id: u32, impact: u8, timestamp: i64) -> IncidentData {
@@ -154,4 +179,45 @@ pub async fn create_incident(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attribute(name: &str, value: &str) -> ComponentAttribute {
+        ComponentAttribute {
+            name: name.to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn merge_keeps_the_environment_attributes_without_overrides() {
+        let environment = vec![attribute("region", "EU-DE")];
+        let merged = merge_component_attributes(&environment, None);
+        assert_eq!(merged, vec![attribute("region", "EU-DE")]);
+    }
+
+    #[test]
+    fn merge_replaces_an_existing_attribute() {
+        let environment = vec![attribute("region", "EU-DE")];
+        let overrides = HashMap::from([("region".to_string(), "Global".to_string())]);
+        let merged = merge_component_attributes(&environment, Some(&overrides));
+        assert_eq!(merged, vec![attribute("region", "Global")]);
+    }
+
+    #[test]
+    fn merge_adds_an_attribute_missing_from_the_environment() {
+        let environment = vec![attribute("region", "EU-DE")];
+        let overrides = HashMap::from([("url".to_string(), "https://example.com".to_string())]);
+        let merged = merge_component_attributes(&environment, Some(&overrides));
+        assert_eq!(
+            merged,
+            vec![
+                attribute("region", "EU-DE"),
+                attribute("url", "https://example.com")
+            ]
+        );
+    }
 }
